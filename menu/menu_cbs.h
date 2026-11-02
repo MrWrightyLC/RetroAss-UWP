@@ -121,6 +121,7 @@ enum
    ACTION_OK_DL_VIDEO_SCALING_SETTINGS_LIST,
    ACTION_OK_DL_VIDEO_HDR_SETTINGS_LIST,
    ACTION_OK_DL_VIDEO_STEREO_SETTINGS_LIST,
+   ACTION_OK_DL_VIDEO_DLSS_NR_SETTINGS_LIST,
    ACTION_OK_DL_CRT_SWITCHRES_SETTINGS_LIST,
    ACTION_OK_DL_AUDIO_SETTINGS_LIST,
    ACTION_OK_DL_AUDIO_OUTPUT_SETTINGS_LIST,
@@ -284,6 +285,10 @@ int generic_action_cheat_toggle(size_t idx, unsigned type, const char *label,
 
 int action_ok_path_use_directory(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx);
+
+void action_ok_manual_content_scan_set_dir(const char *content_dir);
+
+bool action_ok_manual_content_scan_dir_browsing(void);
 
 /**
  * @brief Open a Content Downloader category list

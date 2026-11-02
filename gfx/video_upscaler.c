@@ -14,9 +14,11 @@
  */
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <compat/strl.h>
+#include <retro_atomic.h>
 #include <file/file_path.h>
 #include <string/stdstring.h>
 #include <gfx/nvidia/ngx_loader.h>
@@ -79,6 +81,148 @@ static enum ffx_api video_upscaler_ffx_api(void)
    return FFX_API_VULKAN;
 }
 
+static uint32_t upscaler_dlss_version;
+static char upscaler_dlss_version_dir[DIR_MAX_LENGTH];
+/* UPSCALER_FLAG_* */
+static unsigned upscaler_flags;
+#define UPSCALER_FLAG_WANTED     0x1u
+#define UPSCALER_FLAG_OPTISCALER 0x2u
+
+uint32_t video_upscaler_dlss_version(void)
+{
+   char dir[DIR_MAX_LENGTH];
+   video_upscaler_dir(VIDEO_TEMPORAL_UPSCALER_DLSS, dir, sizeof(dir));
+   if (strcmp(dir, upscaler_dlss_version_dir))
+   {
+      strlcpy(upscaler_dlss_version_dir, dir, sizeof(upscaler_dlss_version_dir));
+      upscaler_dlss_version = ngx_dlss_feature_version(dir);
+   }
+   return upscaler_dlss_version;
+}
+
+uint32_t video_upscaler_preset_min_version(enum video_temporal_upscaler_preset preset)
+{
+   /* A to G: the CNN models of DLSS 2 and 3; H to K came with the
+    * transformer models of 310; L to O later still */
+   if (preset >= VIDEO_TEMPORAL_UPSCALER_PRESET_L)
+      return NGX_VERSION_PACK(310, 4, 0);
+   if (preset >= VIDEO_TEMPORAL_UPSCALER_PRESET_H)
+      return NGX_VERSION_PACK(310, 0, 0);
+   return 0;
+}
+
+static uint32_t upscaler_dlssnr_version;
+static bool upscaler_dlssnr_found;
+static char upscaler_dlssnr_dir[DIR_MAX_LENGTH];
+/* What a session's NGX said of Neural Rendering: UPSCALER_NR_* */
+static retro_atomic_int_t upscaler_nr_state;
+#define UPSCALER_NR_UNKNOWN     0
+#define UPSCALER_NR_SUPPORTED   1
+#define UPSCALER_NR_UNSUPPORTED 2
+
+static void video_upscaler_dlssnr_probe(void)
+{
+   char dir[DIR_MAX_LENGTH];
+   video_upscaler_dir(VIDEO_TEMPORAL_UPSCALER_DLSS, dir, sizeof(dir));
+   if (strcmp(dir, upscaler_dlssnr_dir))
+   {
+      strlcpy(upscaler_dlssnr_dir, dir, sizeof(upscaler_dlssnr_dir));
+      upscaler_dlssnr_found   = ngx_dlssnr_feature_in(dir);
+      upscaler_dlssnr_version = upscaler_dlssnr_found
+         ? ngx_dlssnr_feature_version(dir) : 0;
+   }
+}
+
+uint32_t video_upscaler_dlssnr_version(void)
+{
+   video_upscaler_dlssnr_probe();
+   return upscaler_dlssnr_version;
+}
+
+bool video_upscaler_nr_available(void)
+{
+   video_upscaler_dlssnr_probe();
+   return upscaler_dlssnr_found
+      && retro_atomic_load_relaxed_int(&upscaler_nr_state) != UPSCALER_NR_UNSUPPORTED
+      && !video_upscaler_optiscaler();
+}
+
+void video_upscaler_note_nr(bool supported)
+{
+   retro_atomic_store_relaxed_int(&upscaler_nr_state,
+         supported ? UPSCALER_NR_SUPPORTED : UPSCALER_NR_UNSUPPORTED);
+}
+
+unsigned video_upscaler_nr_mode(void)
+{
+   settings_t *settings = config_get_ptr();
+   unsigned preset, style, intensity, structure, tone, skin;
+   int skin_set;
+   if (!settings->bools.video_dlss_nr_enable)
+      return 0;
+   preset    = settings->uints.video_dlss_nr_preset;
+   style     = settings->uints.video_dlss_nr_style;
+   intensity = settings->uints.video_dlss_nr_intensity / 5;
+   structure = settings->uints.video_dlss_nr_local_structure / 5;
+   tone      = settings->uints.video_dlss_nr_local_tone / 5;
+   skin_set  = settings->ints.video_dlss_nr_skin_structure;
+   skin      = skin_set < 0 ? 0 : 1 + (unsigned)skin_set / 5;
+   if (preset > 3)
+      preset = 0;
+   if (style > 2)
+      style = 0;
+   if (intensity > 40)
+      intensity = 40;
+   if (structure > 40)
+      structure = 40;
+   if (tone > 40)
+      tone = 40;
+   if (skin > 41)
+      skin = 41;
+   return VIDEO_UPSCALER_NR_PACK(VIDEO_UPSCALER_NR_ON
+         | (settings->bools.video_dlss_nr_auto_mask ? VIDEO_UPSCALER_NR_AUTO_MASK : 0),
+         preset, style, intensity, structure, tone, skin);
+}
+
+bool video_upscaler_optiscaler(void)
+{
+   char dir[DIR_MAX_LENGTH];
+   if (     (upscaler_flags & UPSCALER_FLAG_OPTISCALER)
+         || (ngx_lib_present() & NGX_PRESENT_OPTISCALER))
+      return true;
+   video_upscaler_dir(VIDEO_TEMPORAL_UPSCALER_DLSS, dir, sizeof(dir));
+   return ngx_stand_in_in(dir);
+}
+
+void video_upscaler_note_optiscaler(void)
+{
+   upscaler_flags |= UPSCALER_FLAG_OPTISCALER;
+}
+
+bool video_upscaler_wanted(void)
+{
+   return (upscaler_flags & UPSCALER_FLAG_WANTED) != 0;
+}
+
+void video_upscaler_note_wanted(void)
+{
+   char dir[DIR_MAX_LENGTH];
+   if (upscaler_flags & UPSCALER_FLAG_WANTED)
+      return;
+   upscaler_flags |= UPSCALER_FLAG_WANTED;
+   if (config_get_ptr()->uints.video_temporal_upscaler != VIDEO_TEMPORAL_UPSCALER_DLSS)
+      return;
+   /* ahead of NGX, which it then hooks */
+   video_upscaler_dir(VIDEO_TEMPORAL_UPSCALER_DLSS, dir, sizeof(dir));
+   if (ngx_lib_load_stand_in(dir))
+      RARCH_LOG("[Video] Temporal Upscaler: OptiScaler loaded from \"%s\".\n", dir);
+}
+
+void video_upscaler_clear_wanted(void)
+{
+   upscaler_flags &= ~UPSCALER_FLAG_WANTED;
+}
+
 unsigned video_upscaler_probe(enum video_temporal_upscaler kind)
 {
    char dir[DIR_MAX_LENGTH];
@@ -87,10 +231,14 @@ unsigned video_upscaler_probe(enum video_temporal_upscaler kind)
    switch (kind)
    {
       case VIDEO_TEMPORAL_UPSCALER_DLSS:
-         if (ngx_lib_get())
+         if (ngx_lib_present() & NGX_PRESENT_FOUND)
             found |= VIDEO_UPSCALER_FOUND_LIBRARY;
          if (ngx_dlss_feature_in(dir))
             found |= VIDEO_UPSCALER_FOUND_RUNTIME;
+         /* (a probe reads the runtime's version again: it may have
+          * been put there since) */
+         upscaler_dlss_version_dir[0] = '\0';
+         upscaler_dlssnr_dir[0]       = '\0';
          break;
       case VIDEO_TEMPORAL_UPSCALER_FSR:
          if (ffx_runtime_in(FFX_API_D3D12, dir) || ffx_runtime_in(FFX_API_VULKAN, dir))
@@ -121,13 +269,38 @@ size_t video_upscaler_status_string(char *s, size_t len)
    switch (want)
    {
       case VIDEO_TEMPORAL_UPSCALER_DLSS:
+      {
+         uint32_t version = video_upscaler_dlss_version();
          found = video_upscaler_probe(VIDEO_TEMPORAL_UPSCALER_DLSS);
          _len += strlcpy(s + _len, (found & VIDEO_UPSCALER_FOUND_LIBRARY)
                ? " (NGX: found" : " (NGX: not found", len - _len);
-         _len += strlcpy(s + _len, (found & VIDEO_UPSCALER_FOUND_RUNTIME)
-               ? ", DLSS runtime: found)" : ", DLSS runtime: not in DLSS Directory)",
-               len - _len);
+         if (version)
+            _len += snprintf(s + _len, len - _len, ", DLSS runtime %u.%u.%u",
+                  (unsigned)NGX_VERSION_MAJOR(version), (unsigned)NGX_VERSION_MINOR(version),
+                  (unsigned)NGX_VERSION_PATCH(version));
+         else
+            _len += strlcpy(s + _len, (found & VIDEO_UPSCALER_FOUND_RUNTIME)
+                  ? ", DLSS runtime: found" : ", DLSS runtime: not in DLSS Directory",
+                  len - _len);
+         video_upscaler_dlssnr_probe();
+         if (video_upscaler_optiscaler())
+            _len += strlcpy(s + _len, ", via OptiScaler", len - _len);
+         else if (upscaler_dlssnr_found)
+         {
+            uint32_t nr = upscaler_dlssnr_version;
+            if (retro_atomic_load_relaxed_int(&upscaler_nr_state) == UPSCALER_NR_UNSUPPORTED)
+               _len += strlcpy(s + _len, ", Neural Rendering: needs a newer driver",
+                     len - _len);
+            else if (nr)
+               _len += snprintf(s + _len, len - _len, ", Neural Rendering %u.%u.%u",
+                     (unsigned)NGX_VERSION_MAJOR(nr), (unsigned)NGX_VERSION_MINOR(nr),
+                     (unsigned)NGX_VERSION_PATCH(nr));
+            else
+               _len += strlcpy(s + _len, ", Neural Rendering: found", len - _len);
+         }
+         _len += strlcpy(s + _len, ")", len - _len);
          break;
+      }
       case VIDEO_TEMPORAL_UPSCALER_FSR:
          found = video_upscaler_probe(VIDEO_TEMPORAL_UPSCALER_FSR);
          _len += strlcpy(s + _len, (found & VIDEO_UPSCALER_FOUND_RUNTIME)
@@ -149,15 +322,35 @@ size_t video_upscaler_status_string(char *s, size_t len)
 void video_upscaler_log_probe(enum video_temporal_upscaler kind)
 {
    char dir[DIR_MAX_LENGTH];
+   if (!video_upscaler_wanted())
+   {
+      RARCH_LOG("[Video] Temporal Upscaler: not loaded, the core does not ask for it.\n");
+      return;
+   }
    video_upscaler_dir(kind, dir, sizeof(dir));
    switch (kind)
    {
       case VIDEO_TEMPORAL_UPSCALER_DLSS:
+      {
+         uint32_t version = video_upscaler_dlss_version();
          ngx_lib_get();
          RARCH_LOG("[Video] Temporal Upscaler: %s.\n", ngx_lib_status());
-         RARCH_LOG("[Video] Temporal Upscaler: DLSS runtime (nvngx_dlss.dll / libnvidia-ngx-dlss.so) %s in \"%s\".\n",
-               ngx_dlss_feature_in(dir) ? "found" : "NOT found", dir);
+         if (version)
+            RARCH_LOG("[Video] Temporal Upscaler: DLSS runtime %u.%u.%u in \"%s\".\n",
+                  (unsigned)NGX_VERSION_MAJOR(version), (unsigned)NGX_VERSION_MINOR(version),
+                  (unsigned)NGX_VERSION_PATCH(version), dir);
+         else
+            RARCH_LOG("[Video] Temporal Upscaler: DLSS runtime (nvngx_dlss.dll / libnvidia-ngx-dlss.so) %s in \"%s\".\n",
+                  ngx_dlss_feature_in(dir) ? "found" : "NOT found", dir);
+         if (ngx_dlssnr_feature_in(dir))
+         {
+            uint32_t nr = video_upscaler_dlssnr_version();
+            RARCH_LOG("[Video] Temporal Upscaler: DLSS Neural Rendering runtime %u.%u.%u in \"%s\".\n",
+                  (unsigned)NGX_VERSION_MAJOR(nr), (unsigned)NGX_VERSION_MINOR(nr),
+                  (unsigned)NGX_VERSION_PATCH(nr), dir);
+         }
          break;
+      }
       case VIDEO_TEMPORAL_UPSCALER_FSR:
       {
          enum ffx_api api = video_upscaler_ffx_api();
@@ -176,6 +369,11 @@ void video_upscaler_log_probe(enum video_temporal_upscaler kind)
 
 static const video_upscaler_backend_t *upscaler_backend;
 static const struct retro_hw_upscaler_inputs *upscaler_inputs;
+/* Under the threaded video wrapper the driver takes on the video
+ * thread what the wrapper carried there for the frame, never the
+ * pointer the core set on the main thread for a newer one */
+static const struct retro_hw_upscaler_inputs *upscaler_carried;
+static bool upscaler_carrying;
 static unsigned upscaler_out_dims;
 
 static unsigned video_upscaler_quality(unsigned out_dims)
@@ -188,18 +386,35 @@ static unsigned video_upscaler_quality(unsigned out_dims)
       ? VIDEO_TEMPORAL_UPSCALER_QUALITY_BALANCED : VIDEO_TEMPORAL_UPSCALER_QUALITY_QUALITY;
 }
 
+float video_upscaler_frame_time_ms(const struct retro_hw_upscaler_inputs *inputs)
+{
+   float hz;
+   if (inputs->frame_time_ms > 0.0f)
+      return inputs->frame_time_ms;
+   hz = video_driver_get_core_hz();
+   if (hz > 0.0f)
+      return 1000.0f / hz;
+   return 1000.0f / 60.0f;
+}
+
 unsigned video_upscaler_mode(unsigned out_dims)
 {
-   unsigned preset = config_get_ptr()->uints.video_temporal_upscaler_preset;
+   settings_t *settings = config_get_ptr();
+   unsigned preset    = settings->uints.video_temporal_upscaler_preset;
+   unsigned sharpness = settings->uints.video_temporal_upscaler_sharpness;
    if (preset >= VIDEO_TEMPORAL_UPSCALER_PRESET_LAST)
       preset = VIDEO_TEMPORAL_UPSCALER_PRESET_DEFAULT;
-   return VIDEO_UPSCALER_MODE_PACK(video_upscaler_quality(out_dims), preset);
+   if (sharpness > 100)
+      sharpness = 100;
+   return VIDEO_UPSCALER_MODE_PACK_SHARP(video_upscaler_quality(out_dims),
+         preset, sharpness);
 }
 
 unsigned video_upscaler_mode_ngx(unsigned mode)
 {
    unsigned quality = NGX_PERF_QUALITY_MAX_QUALITY;
-   unsigned preset  = NGX_DLSS_PRESET_DEFAULT;
+   /* (the preset is numbered as NGX numbers it) */
+   unsigned preset  = VIDEO_UPSCALER_MODE_PRESET(mode);
    switch (VIDEO_UPSCALER_MODE_QUALITY(mode))
    {
       case VIDEO_TEMPORAL_UPSCALER_QUALITY_NATIVE:
@@ -217,36 +432,32 @@ unsigned video_upscaler_mode_ngx(unsigned mode)
       default:
          break;
    }
-   switch (VIDEO_UPSCALER_MODE_PRESET(mode))
-   {
-      case VIDEO_TEMPORAL_UPSCALER_PRESET_J:
-         preset = NGX_DLSS_PRESET_J;
-         break;
-      case VIDEO_TEMPORAL_UPSCALER_PRESET_K:
-         preset = NGX_DLSS_PRESET_K;
-         break;
-      default:
-         break;
-   }
-   return NGX_MODE_PACK(quality, preset);
+   if (preset >= NGX_DLSS_PRESET_LAST)
+      preset = NGX_DLSS_PRESET_DEFAULT;
+   return NGX_MODE_PACK_SHARP(quality, preset, VIDEO_UPSCALER_MODE_SHARPNESS(mode));
 }
 
 unsigned video_upscaler_mode_ffx(unsigned mode)
 {
+   unsigned quality = FFX_UPSCALE_MODE_QUALITY;
    switch (VIDEO_UPSCALER_MODE_QUALITY(mode))
    {
       case VIDEO_TEMPORAL_UPSCALER_QUALITY_NATIVE:
-         return FFX_UPSCALE_MODE_NATIVEAA;
+         quality = FFX_UPSCALE_MODE_NATIVEAA;
+         break;
       case VIDEO_TEMPORAL_UPSCALER_QUALITY_BALANCED:
-         return FFX_UPSCALE_MODE_BALANCED;
+         quality = FFX_UPSCALE_MODE_BALANCED;
+         break;
       case VIDEO_TEMPORAL_UPSCALER_QUALITY_PERFORMANCE:
-         return FFX_UPSCALE_MODE_PERFORMANCE;
+         quality = FFX_UPSCALE_MODE_PERFORMANCE;
+         break;
       case VIDEO_TEMPORAL_UPSCALER_QUALITY_ULTRA_PERFORMANCE:
-         return FFX_UPSCALE_MODE_ULTRA_PERFORMANCE;
+         quality = FFX_UPSCALE_MODE_ULTRA_PERFORMANCE;
+         break;
       default:
          break;
    }
-   return FFX_UPSCALE_MODE_QUALITY;
+   return quality | (VIDEO_UPSCALER_MODE_SHARPNESS(mode) << 16);
 }
 
 unsigned video_upscaler_mode_xess(unsigned mode)
@@ -276,6 +487,8 @@ void video_upscaler_detach(void)
 {
    upscaler_backend = NULL;
    upscaler_inputs  = NULL;
+   upscaler_carried = NULL;
+   upscaler_carrying = false;
 }
 
 void video_upscaler_set_output(unsigned dims)
@@ -321,9 +534,36 @@ static void video_upscaler_set_inputs(void *handle,
 
 const struct retro_hw_upscaler_inputs *video_upscaler_take_inputs(void)
 {
+   const struct retro_hw_upscaler_inputs *inputs;
+   if (upscaler_carrying)
+   {
+      upscaler_carrying = false;
+      inputs            = upscaler_carried;
+      upscaler_carried  = NULL;
+      return inputs;
+   }
+   inputs          = upscaler_inputs;
+   upscaler_inputs = NULL;
+   return inputs;
+}
+
+const struct retro_hw_upscaler_inputs *video_upscaler_take_set_inputs(void)
+{
    const struct retro_hw_upscaler_inputs *inputs = upscaler_inputs;
    upscaler_inputs = NULL;
    return inputs;
+}
+
+void video_upscaler_carry_inputs(const struct retro_hw_upscaler_inputs *inputs)
+{
+   upscaler_carried  = inputs;
+   upscaler_carrying = true;
+}
+
+void video_upscaler_drop_carry(void)
+{
+   upscaler_carried  = NULL;
+   upscaler_carrying = false;
 }
 
 static const struct retro_hw_render_upscaler_interface upscaler_iface = {

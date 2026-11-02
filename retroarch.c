@@ -105,7 +105,7 @@
 
 #ifdef HAVE_LIBNX
 #include <switch.h>
-#include "switch_performance_profiles.h"
+#include "os/libnx/switch_performance_profiles.h"
 #endif
 
 #if defined(ANDROID)
@@ -225,7 +225,7 @@
 #ifdef HAVE_BLUETOOTH
 #include "bluetooth/bluetooth_driver.h"
 #endif
-#include "misc/cpufreq/cpufreq.h"
+#include "os/lakka/cpufreq/cpufreq.h"
 #include "led/led_driver.h"
 #include "midi_driver.h"
 #include "core.h"
@@ -277,9 +277,9 @@
 
 #ifdef HAVE_LAKKA
 #include <retro_dirent.h>
-#include "lakka.h"
+#include "os/lakka/lakka.h"
 #ifdef HAVE_LAKKA_SWITCH
-#include "misc/reboot2payload/reboot2payload.h"
+#include "os/lakka/reboot2payload/reboot2payload.h"
 #endif
 #include <systemd/sd-daemon.h>
 #endif
@@ -1025,10 +1025,10 @@ static bool midi_driver_init(void *data)
    return true;
 }
 
-void midi_driver_request(void)
+void midi_driver_request(bool requested)
 {
-   rarch_midi_drv_requested = true;
-   if (rarch_midi_drv_inited)
+   rarch_midi_drv_requested = requested;
+   if (requested && rarch_midi_drv_inited)
       midi_driver_open(config_get_ptr());
 }
 
@@ -1758,6 +1758,7 @@ void drivers_init(
       *location_st                = location_state_get_ptr();
    bool video_is_threaded         = VIDEO_DRIVER_IS_THREADED_INTERNAL(video_st);
    gfx_display_t *p_disp          = disp_get_ptr();
+   double carried_input           = 0.0;
 #if defined(HAVE_GFX_WIDGETS)
    bool video_font_enable         = settings->bools.video_font_enable;
    bool menu_enable_widgets       = settings->bools.menu_enable_widgets;
@@ -1785,7 +1786,9 @@ void drivers_init(
       video_st->frame_time_count = 0;
 
 #ifdef HAVE_OPENXR
-      /* Before video makes a headset session. */
+      /* A video reinit ends edit mode; then video makes a headset
+       * session. */
+      input_openxr_edit_end();
       input_openxr_register();
 #endif
       video_driver_lock_new();
@@ -1868,9 +1871,29 @@ void drivers_init(
       }
    }
 
-   /* Adjust rates */
+   /* Adjust rates. Running audio carried across a content switch takes
+    * its new rate in place, below, instead of having it set under it. */
    if (flags & (DRIVER_VIDEO_MASK | DRIVER_AUDIO_MASK))
-      driver_adjust_system_rates(runloop_st, video_st, settings, NULL);
+      driver_adjust_system_rates(runloop_st, video_st, settings,
+            (lifetime_flags & DRIVER_LIFETIME_AUDIO_CARRIED)
+            ? &carried_input : NULL);
+
+   if (     (lifetime_flags & DRIVER_LIFETIME_AUDIO_CARRIED)
+         && !audio_driver_session_carry(carried_input))
+   {
+      /* Not in place after all: open it again for the new session,
+       * the device kept across when it can be */
+      audio_driver_keep_device(true);
+      audio_driver_deinit_for_reinit();
+      audio_st->context_audio_data = NULL;
+      AUDIO_FLAGS_SET(audio_st, AUDIO_FLAG_ACTIVE);
+      if (!audio_driver_find_driver(settings->arrays.audio_driver,
+               "audio driver", verbosity_enabled))
+         retroarch_fail(1, "audio_driver_find()");
+      if (carried_input > 0.0)
+         audio_st->input = (float)carried_input;
+      flags |= DRIVER_AUDIO_MASK;
+   }
 
    /* Initialize audio driver */
    if (flags & DRIVER_AUDIO_MASK)
@@ -2254,13 +2277,11 @@ void driver_uninit(int flags, enum driver_lifetime_flags lifetime_flags)
       microphone_driver_deinit(lifetime_flags & DRIVER_LIFETIME_RESET);
 #endif
 
+   /* The core's request outlives this: a staged content load frees
+    * the drivers after the new core has asked, and drivers_init
+    * reopens for it. The request ends with the core's unload. */
    if (flags & DRIVER_MIDI_MASK)
-   {
       midi_driver_free();
-      /* Reopen after a reinit, not after the core is unloaded */
-      if (!(lifetime_flags & DRIVER_LIFETIME_RESET))
-         rarch_midi_drv_requested = false;
-   }
 
 #ifdef HAVE_LAKKA
    cpu_scaling_driver_free();
@@ -5980,7 +6001,11 @@ bool command_event(enum event_command cmd, void *data)
              * asks exactly as it did before. */
             netplay_mitm_query_prefetch();
 
-            if (netplay_driver_ctl(RARCH_NETPLAY_CTL_USE_CORE_PACKET_INTERFACE, NULL))
+            /* A lockstep host starts on the running content, as a joiner
+             * does: joiners get its state, and reloading restarts the
+             * game, which a core as large as Dolphin may not survive */
+            if (     netplay_driver_ctl(RARCH_NETPLAY_CTL_USE_CORE_PACKET_INTERFACE, NULL)
+                  || netplay_driver_ctl(RARCH_NETPLAY_CTL_USE_LOCKSTEP, NULL))
             {
                netplay_driver_ctl(RARCH_NETPLAY_CTL_ENABLE_SERVER, NULL);
                command_event(CMD_EVENT_NETPLAY_INIT, NULL);
@@ -6532,6 +6557,10 @@ bool command_event(enum event_command cmd, void *data)
          }
          break;
       case CMD_EVENT_HEADSET_RECENTER:
+#ifdef HAVE_OPENXR
+         /* A grab ends first, where the hand left its item. */
+         input_openxr_edit_release();
+#endif
          video_driver_headset_recenter();
          break;
       case CMD_EVENT_HEADSET_VIEW_TOGGLE:
@@ -6593,6 +6622,25 @@ bool command_event(enum event_command cmd, void *data)
                             | MENU_ST_FLAG_PREVENT_POPULATE;
 #endif
          }
+         break;
+      case CMD_EVENT_HEADSET_EDIT_SCREENS:
+#ifdef HAVE_OPENXR
+         /* Edit mode starts here, between frames, as its pause draws a
+          * frame; the menu closes first. */
+         if (input_openxr_edit_toggle())
+         {
+#ifdef HAVE_MENU
+            if (menu_st->flags & MENU_ST_FLAG_ALIVE)
+               retroarch_menu_running_finished(false);
+#endif
+            input_openxr_edit_begin(
+                  settings->bools.video_openxr_edit_pause,
+                  settings->bools.video_openxr_edit_snap,
+                  settings->uints.video_openxr_edit_snap_angles,
+                  settings->uints.video_openxr_edit_hinge_gap,
+                  settings->uints.video_openxr_edit_smoothing);
+         }
+#endif
          break;
       case CMD_EVENT_NONE:
          return false;
@@ -6990,6 +7038,16 @@ void main_exit(void *args)
       menu_st->flags &= ~MENU_ST_FLAG_DATA_OWN;
 #endif
    retroarch_ctl(RARCH_CTL_MAIN_DEINIT, NULL);
+
+   /* After the core is unloaded: its deinit still closes the files it
+    * has open on a network share, and closing one needs the pool's
+    * connection. */
+#ifdef HAVE_SMBCLIENT
+   smb_shutdown();
+#endif
+#ifdef HAVE_NFSCLIENT
+   nfs_shutdown();
+#endif
 
    if (runloop_st->perfcnt_enable)
    {
@@ -7685,6 +7743,9 @@ static void retroarch_print_features(void)
 #endif
 #ifdef HAVE_RZSTD
    _len += _PSUPP_BUF(buf, _len, SUPPORTS_ZSTD,            "zstd",            "Zstandard support");
+#endif
+#ifdef HAVE_RBZIP2
+   _len += _PSUPP_BUF(buf, _len, SUPPORTS_BZIP2,           "bzip2",           "bzip2 support");
 #endif
 #ifdef HAVE_RRAR
    _len += _PSUPP_BUF(buf, _len, SUPPORTS_RAR,             "rar",             "RAR support");
@@ -8972,6 +9033,15 @@ static bool retroarch_parse_input_and_config(
 
                   drivers_init(settings, reinit_flags, (enum driver_lifetime_flags)0, false);
                   retroarch_init_task_queue();
+#ifdef HAVE_THREADS
+                  /* Threaded for this run whatever the setting: only
+                   * there does the scan get its readers. */
+                  if (!explicit_menu && !task_queue_is_threaded())
+                  {
+                     task_queue_set_threaded();
+                     task_queue_check();
+                  }
+#endif
 
 #ifdef HAVE_MENU
                   if (explicit_menu)
@@ -9185,14 +9255,18 @@ static bool retroarch_main_init_fail(void)
 /* Picks the driver of every kind from the configuration; the video,
  * input and menu ones are required.  Reports through retroarch_fail(),
  * so it runs under a live error_sjlj_context. */
+/* @audio: false when the running audio driver is carried across, so
+ * the table it runs on - the threaded wrapper's, say - is not swapped
+ * from under it. */
 static void retroarch_find_drivers(settings_t *settings,
-      bool verbosity_enabled)
+      bool verbosity_enabled, bool audio)
 {
 #ifdef HAVE_MENU
    struct menu_state *menu_st    = menu_state_get_ptr();
 #endif
-   if (!(audio_driver_find_driver(settings->arrays.audio_driver,
-         "audio driver", verbosity_enabled)))
+   if (     audio
+         && !(audio_driver_find_driver(settings->arrays.audio_driver,
+               "audio driver", verbosity_enabled)))
       retroarch_fail(1, "audio_driver_find()");
    if (!video_driver_find_driver(settings,
          "video driver", verbosity_enabled))
@@ -9567,7 +9641,7 @@ bool retroarch_main_init_core(int argc, char *argv[],
     * staged load has the previous session's drivers up at this point
     * and finds after freeing them, in retroarch_main_init_drivers(). */
    if (find_drivers)
-      retroarch_find_drivers(settings, verbosity_enabled);
+      retroarch_find_drivers(settings, verbosity_enabled, true);
 
 #ifdef HAVE_CLOUDSYNC
    /* Content from the command line loads its save RAM below, before
@@ -9679,6 +9753,8 @@ bool retroarch_main_init_drivers(bool staged,
       *input_st                  = input_state_get_ptr();
    settings_t *settings          = config_get_ptr();
    recording_state_t *rec_st     = recording_state_get_ptr();
+   int init_flags                = DRIVERS_CMD_ALL;
+   int init_lifetime             = 0;
 
    if (setjmp(rarch_st.error_sjlj_context) > 0)
    {
@@ -9698,17 +9774,27 @@ bool retroarch_main_init_drivers(bool staged,
        * once it is back. */
       struct video_hw_request hw_request;
       video_driver_hw_request_take(&hw_request);
+      /* Audio the next session would open the same way stays up
+       * through the stage, so what plays over the switch - the menu's
+       * sounds - is not paused for the rebuild of the rest. */
+      if (audio_driver_session_carry_ok())
+      {
+         init_flags     &= ~DRIVER_AUDIO_MASK;
+         init_lifetime   = DRIVER_LIFETIME_AUDIO_CARRIED;
+      }
       /* drivers_init() is a few lines down: an input driver that can
        * outlive the video driver is left running across the two */
-      driver_uninit(DRIVERS_CMD_ALL, DRIVER_LIFETIME_SESSION_SWITCH);
+      driver_uninit(init_flags, DRIVER_LIFETIME_SESSION_SWITCH);
       video_driver_hw_request_restore(&hw_request);
 
       video_state_get_ptr()->main_flags |=  VIDEO_FLAG_ACTIVE;
       AUDIO_FLAGS_SET(audio_state_get_ptr(), AUDIO_FLAG_ACTIVE);
-      retroarch_find_drivers(settings, verbosity_enabled);
+      retroarch_find_drivers(settings, verbosity_enabled,
+            (init_flags & DRIVER_AUDIO_MASK) != 0);
    }
 
-   drivers_init(settings, DRIVERS_CMD_ALL, (enum driver_lifetime_flags)0, verbosity_enabled);
+   drivers_init(settings, init_flags,
+         (enum driver_lifetime_flags)init_lifetime, verbosity_enabled);
 #ifdef HAVE_COMMAND
    input_driver_refresh_command(input_st, settings);
 #endif
@@ -9883,7 +9969,13 @@ void retroarch_task_queue_configure(void)
     * theirs. */
    {
       unsigned cores = cpu_features_get_core_amount();
-      task_queue_set_parallel_workers(cores > 3 ? cores - 3 : 0);
+      unsigned extra = cores > 3 ? cores - 3 : 0;
+#ifdef __EMSCRIPTEN__
+      /* these and the one worker fill PTHREAD_POOL_SIZE */
+      if (extra > 4)
+         extra = 4;
+#endif
+      task_queue_set_parallel_workers(extra);
    }
    if (threaded_enable)
       task_queue_set_threaded();
@@ -10566,6 +10658,8 @@ static bool retroarch_main_quit_begin(void)
    if (runloop_st->flags & RUNLOOP_FLAG_SHUTDOWN_INITIATED)
       return false;
    recording_gpu_stop();
+   if (recording_state_get_ptr()->start_pending)
+      command_event(CMD_EVENT_RECORD_DEINIT, NULL);
    if (   settings->bools.savestate_auto_save
        && runloop_st->current_core_type != CORE_TYPE_DUMMY)
       command_event_save_auto_state();
@@ -10647,13 +10741,6 @@ static void retroarch_main_quit_finish(bool first)
 
 #if defined(WEBOS) && defined(HAVE_WAYLAND)
    shutdown_webos_contexts();
-#endif
-
-#ifdef HAVE_SMBCLIENT
-   smb_shutdown();
-#endif
-#ifdef HAVE_NFSCLIENT
-   nfs_shutdown();
 #endif
 }
 

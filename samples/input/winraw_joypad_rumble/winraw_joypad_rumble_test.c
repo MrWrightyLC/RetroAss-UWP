@@ -239,7 +239,9 @@ static DWORD WINAPI fake_XInputSetState(DWORD i, struct fake_xvib *v)
 }
 static HMODULE WINAPI fake_LoadLibraryA(LPCSTR name)
 {
-   (void)name;
+   /* XInput's; hid.dll, for a Sony pad's Bluetooth address, is not */
+   if (_strnicmp(name, "xinput", 6))
+      return NULL;
    xinput_loads++;
    return (HMODULE)(uintptr_t)0x5150;
 }
@@ -290,7 +292,6 @@ static settings_t stub_settings;
 settings_t *config_get_ptr(void) { return &stub_settings; }
 /* the settings a driver asks for by name, read from the ones above */
 #include "../input_config_stubs.h"
-bool winraw_raw_input_polled(void) { return true; }
 void winraw_queue_read(void) { }
 void winraw_queue_claim_thread(bool claim) { (void)claim; }
 

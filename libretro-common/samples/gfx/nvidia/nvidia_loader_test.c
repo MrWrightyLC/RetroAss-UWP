@@ -1,6 +1,7 @@
 /* gfx/nvidia: the NGX and NVAPI loaders against stand-in libraries.
  *
- * ngx_utf8_to_wide and ngx_dlss_feature_in need no library. ngx_lib_get
+ * ngx_utf8_to_wide and ngx_dlss_feature_in need no library, nor does
+ * ngx_lib_present on Windows. ngx_lib_get
  * finds the stand-in NGX core (fake_ngx.c, _nvngx.dll beside the test
  * on Windows, libnvidia-ngx.so.1 on LD_LIBRARY_PATH on Linux), resolves
  * every table and the test calls through them with the SDK's layouts:
@@ -15,6 +16,11 @@
 #include <retro_miscellaneous.h>
 #include <gfx/nvidia/ngx_loader.h>
 #include <gfx/nvidia/nvapi_loader.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 static int failures;
 
@@ -72,9 +78,107 @@ static void test_feature_dir(void)
    if (f)
       fclose(f);
    CHECK(ngx_dlss_feature_in(dir));
+   /* (an empty file: on Linux its name says the version, on Windows
+    * nothing does) */
+#if defined(_WIN32)
+   CHECK(ngx_dlss_feature_version(dir) == 0);
+#else
+   CHECK(ngx_dlss_feature_version(dir) == NGX_VERSION_PACK(310, 1, 0));
+#endif
+   /* DLSS Neural Rendering's library beside it, never taken for
+    * Super Resolution's nor it for that; its version never loads it */
+   CHECK(!ngx_dlssnr_feature_in(dir));
    remove(file);
+#if defined(_WIN32)
+   fill_pathname_join_special(file, dir, "nvngx_dlssnr.dll", sizeof(file));
+#else
+   fill_pathname_join_special(file, dir, "libnvidia-ngx-dlssnr.so.310.8.0", sizeof(file));
+#endif
+   f = fopen(file, "wb");
+   if (f)
+      fclose(f);
+   CHECK(ngx_dlssnr_feature_in(dir));
+   CHECK(!ngx_dlss_feature_in(dir));
+#if defined(_WIN32)
+   CHECK(ngx_dlssnr_feature_version(dir) == 0);
+#else
+   CHECK(ngx_dlssnr_feature_version(dir) == NGX_VERSION_PACK(310, 8, 0));
+#endif
+   remove(file);
+   CHECK(!ngx_dlssnr_feature_in(dir));
+   CHECK(ngx_dlssnr_feature_version(dir) == 0);
    CHECK(!ngx_dlss_feature_in(dir));
    remove(dir);
+   /* The stand-in feature library built beside the test: its version
+    * read before NGX has it, from its file version (Windows) or file
+    * name (Linux); without either, from the snippet word */
+   CHECK(ngx_dlss_feature_in("nvidia_loader_test_feature"));
+   CHECK(ngx_dlss_feature_version("nvidia_loader_test_feature") == NGX_VERSION_PACK(310, 2, 1));
+   CHECK(ngx_dlss_feature_in("nvidia_loader_test_snippet"));
+   CHECK(ngx_dlss_feature_version("nvidia_loader_test_snippet") == NGX_VERSION_PACK(310, 2, 2));
+   /* The snippet word as the libraries pack it: 310.9.16 (its file
+    * version says so), 3.5.0 */
+   CHECK(ngx_snippet_version(0x01360910u) == NGX_VERSION_PACK(310, 9, 16));
+   CHECK(ngx_snippet_version(0x00030500u) == NGX_VERSION_PACK(3, 5, 0));
+   CHECK(NGX_VERSION_MAJOR(NGX_VERSION_PACK(310, 2, 1)) == 310
+         && NGX_VERSION_MINOR(NGX_VERSION_PACK(310, 2, 1)) == 2
+         && NGX_VERSION_PATCH(NGX_VERSION_PACK(310, 2, 1)) == 1);
+   CHECK(ngx_dlss_feature_version("nvidia_loader_test_missing") == 0);
+   CHECK(ngx_dlss_feature_version("") == 0);
+}
+
+/* OptiScaler in NGX's place: the module says so on Windows (the
+ * stand-in core carries its product name there), and its parameter
+ * tables carry its key on every platform */
+static void test_optiscaler(const ngx_lib_t *lib, ngx_parameter_t *caps)
+{
+   void (*set)(int) = NULL;
+#if defined(_WIN32)
+   FARPROC p = GetProcAddress((HMODULE)lib->handle, "fake_ngx_set_optiscaler");
+   CHECK(ngx_lib_is_optiscaler());
+   CHECK(strstr(ngx_lib_status(), "(OptiScaler 0.7.7-test)") != NULL);
+#else
+   void *p = dlsym(lib->handle, "fake_ngx_set_optiscaler");
+   CHECK(!ngx_lib_is_optiscaler());
+   CHECK(strstr(ngx_lib_status(), "OptiScaler") == NULL);
+#endif
+   memcpy(&set, &p, sizeof(set));
+   CHECK(set != NULL);
+   CHECK(!ngx_params_from_optiscaler(lib, caps));
+   CHECK(!ngx_params_from_optiscaler(lib, NULL));
+   CHECK(!ngx_params_from_optiscaler(NULL, caps));
+   if (set)
+      set(1);
+}
+
+/* Found and named before anything loads it: a stand-in hooks the
+ * process once loaded, so a status must not load it on Windows */
+static void test_present(void)
+{
+#if defined(_WIN32)
+   CHECK(ngx_lib_present() == (NGX_PRESENT_FOUND | NGX_PRESENT_OPTISCALER));
+   CHECK(GetModuleHandleW(L"_nvngx.dll") == NULL);
+#else
+   CHECK(ngx_lib_present() == NGX_PRESENT_FOUND);
+#endif
+}
+
+/* OptiScaler under its own name in the DLSS directory, loaded ahead of
+ * the core library (Windows); nowhere else, and never after it */
+static void test_stand_in(void)
+{
+#if defined(_WIN32)
+   CHECK(ngx_stand_in_in("nvidia_loader_test_feature"));
+   CHECK(!ngx_stand_in_in("nvidia_loader_test_snippet"));
+   CHECK(!ngx_lib_load_stand_in("nvidia_loader_test_snippet"));
+   CHECK(GetModuleHandleW(L"OptiScaler.dll") == NULL);
+   CHECK(ngx_lib_load_stand_in("nvidia_loader_test_feature"));
+   CHECK(GetModuleHandleW(L"OptiScaler.dll") != NULL);
+   CHECK(ngx_lib_load_stand_in("nvidia_loader_test_feature"));
+#else
+   CHECK(!ngx_stand_in_in("nvidia_loader_test_feature"));
+   CHECK(!ngx_lib_load_stand_in("nvidia_loader_test_feature"));
+#endif
 }
 
 static void test_ngx(void)
@@ -138,6 +242,15 @@ static void test_ngx(void)
    CHECK(lib->param.get_i(caps, "Project", &v) == NGX_RESULT_SUCCESS && v == 10);
    CHECK(lib->param.get_i(caps, "Paths", &v) == NGX_RESULT_SUCCESS && v == 'Z');
    CHECK(NGX_FAILED(lib->param.get_i(caps, "Nothing", &v)));
+   test_optiscaler(lib, caps);
+   /* (the knob set: the next session's tables carry the key) */
+   in_use = 1;
+   CHECK(lib->vulkan.shutdown1(&device, &in_use) == NGX_RESULT_SUCCESS);
+   CHECK(lib->vulkan.init_project_id_ext("project-id", NGX_ENGINE_TYPE_CUSTOM,
+         "1.0", dir, &device, &device, &device, NULL, NULL,
+         NGX_VERSION_API, &info) == NGX_RESULT_SUCCESS);
+   CHECK(NGX_SUCCEEDED(lib->vulkan.get_capability_parameters(&caps)) && caps);
+   CHECK(ngx_params_from_optiscaler(lib, caps));
 
    CHECK(lib->vulkan.allocate_parameters(&p) == NGX_RESULT_SUCCESS && p);
    CHECK(NGX_FAILED(lib->vulkan.create_feature1(&device, &device,
@@ -193,6 +306,8 @@ int main(void)
 {
    test_wide();
    test_feature_dir();
+   test_present();
+   test_stand_in();
    test_ngx();
    test_nvapi();
    if (failures)

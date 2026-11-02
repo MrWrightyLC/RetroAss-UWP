@@ -182,14 +182,14 @@ console_set "switch tls"    "-I$STUBS/libnx"              "-DHAVE_LIBNX -DSWITCH
 # The built-in NFS client, which the 3DS, Vita, Switch and Wii U
 # build, under the defines their Makefiles set (RARCH_CONSOLE for the
 # console sleep and the 3DS transfer cap, Vita's legacy socket layer):
-# Wii U against its own wiiu/include, Vita against stubs of vitasdk's
+# Wii U against its own os/wiiu/include, Vita against stubs of vitasdk's
 # socket headers.
 NFS_SET="libretro-common/net/net_nfs3.c libretro-common/vfs/vfs_implementation_nfs.c libretro-common/vfs/vfs_prefetch.c"
 NFSD="-DHAVE_RETRONFS -DHAVE_NFSCLIENT"
 console_set "3ds nfs"       "-Itools/platform_stubs/ctr $NFSD"  "-D_3DS -DARM11 -DRARCH_CONSOLE" $NFS_SET
 console_set "vita nfs"      "-Itools/platform_stubs/vita $NFSD" "-DVITA -DRARCH_CONSOLE -DHAVE_SOCKET_LEGACY" $NFS_SET
 console_set "switch nfs"    "-I$STUBS/libnx $NFSD"              "-DHAVE_LIBNX -DSWITCH -D__SWITCH__ -DRARCH_CONSOLE" $NFS_SET
-console_set "wiiu nfs"      "-Iwiiu/include -Itools/platform_stubs/wiiu $NFSD" "-DWIIU -D__WUT__ -DHW_WUP -D__wiiu__ -DRARCH_CONSOLE" $NFS_SET
+console_set "wiiu nfs"      "-Ios/wiiu/include -Itools/platform_stubs/wiiu $NFSD" "-DWIIU -D__WUT__ -DHW_WUP -D__wiiu__ -DRARCH_CONSOLE" $NFS_SET
 # The built-in SMB and Kerberos clients, which the 3DS, Vita and Switch
 # build on their crypto (the Wii U has no kernel RNG for it to draw on).
 SMB_SET="libretro-common/net/net_smb2.c libretro-common/net/net_krb5.c libretro-common/vfs/vfs_implementation_smb.c"
@@ -344,7 +344,11 @@ platform_video "dingux video"   "-DDINGUX" "-I/usr/include/SDL" \
 platform_video "rs90 video"     "-DDINGUX -DRS90" "-I/usr/include/SDL" \
    gfx/drivers/sdl_rs90_gfx.c /usr/include/SDL/SDL.h
 platform_video "wiiu gx2 video" "-DWIIU $HOSTOFF" \
-   "-Iwiiu/include -Iwiiu" gfx/drivers/gx2_gfx.c ""
+   "-Ios/wiiu/include -Ios/wiiu" gfx/drivers/gx2_gfx.c ""
+# The iosuhax client, devoptab and libfat sector interface that replaced
+# deps/libiosuhax, against newlib's devoptab order.
+platform_video "wiiu iosuhax" "-DWIIU -D__wiiu__ -DHAVE_IOSUHAX $HOSTOFF" \
+   "-Ios/wiiu/include -Itools/platform_stubs/wiiu" os/wiiu/fs/iosuhax.c ""
 platform_video "hub75 video" "" "" gfx/drivers/hub75_gfx.c ""
 platform_video "openvg video" "-DHAVE_VG -DHAVE_EGL" \
    "-Itools/platform_stubs/openvg" gfx/drivers/vg.c ""
@@ -363,6 +367,13 @@ platform_video "dispmanx video" "-DHAVE_DISPMANX" "-I$STUBS/videocore" \
 platform_video "oga video" "-DHAVE_ODROIDGO2" \
    "-I$STUBS/rga -I/usr/include/libdrm" \
    gfx/drivers/oga_gfx.c /usr/include/xf86drm.h
+# Its GL context: the RGA rotate and page flip that libgo2 used to do,
+# against the same librga stand-in.
+platform_video "go2 drm context" \
+   "-DHAVE_ODROIDGO2 -DHAVE_KMS -DHAVE_EGL -DHAVE_OPENGLES -DHAVE_GLSL" \
+   "-I$STUBS/rga -I/usr/include/libdrm" \
+   gfx/drivers_context/drm_go2_ctx.c \
+   "/usr/include/xf86drm.h /usr/include/gbm.h /usr/include/EGL/egl.h"
 
 # The Direct3D drivers, against the DirectX headers the tree vendors in
 # gfx/include/dxsdk. Six drivers no other lane compiles, and they read
@@ -440,22 +451,22 @@ d3d_video "d3d11 video, no threads"  "$D3DDEFS -DHAVE_D3D11 -UHAVE_THREADS" \
    gfx/drivers/d3d11.c
 d3d_video "d3d12 video, no threads"  "$D3DDEFS -DHAVE_D3D12 -UHAVE_THREADS" \
    gfx/drivers/d3d12.c
-d3d_video "d3d12 video, NGX upscaler" "$D3DDEFS -DHAVE_D3D12 -DHAVE_NGX" \
+d3d_video "d3d12 video, temporal upscaler" "$D3DDEFS -DHAVE_D3D12 -DHAVE_TEMPORAL_UPSCALER" \
    gfx/drivers/d3d12.c
-d3d_video "d3d12 NGX backend" "$D3DDEFS -DHAVE_D3D12 -DHAVE_NGX" \
+d3d_video "d3d12 NGX backend" "$D3DDEFS -DHAVE_D3D12 -DHAVE_TEMPORAL_UPSCALER" \
    gfx/common/d3d12_ngx.c
 d3d_video "d3d12 NGX backend, no threads" \
-   "$D3DDEFS -DHAVE_D3D12 -DHAVE_NGX -UHAVE_THREADS" gfx/common/d3d12_ngx.c
-d3d_video "d3d12 upscaler dispatch" "$D3DDEFS -DHAVE_D3D12 -DHAVE_NGX" \
+   "$D3DDEFS -DHAVE_D3D12 -DHAVE_TEMPORAL_UPSCALER -UHAVE_THREADS" gfx/common/d3d12_ngx.c
+d3d_video "d3d12 upscaler dispatch" "$D3DDEFS -DHAVE_D3D12 -DHAVE_TEMPORAL_UPSCALER" \
    gfx/common/d3d12_upscaler.c
-d3d_video "d3d12 FSR backend" "$D3DDEFS -DHAVE_D3D12 -DHAVE_NGX" \
+d3d_video "d3d12 FSR backend" "$D3DDEFS -DHAVE_D3D12 -DHAVE_TEMPORAL_UPSCALER" \
    gfx/common/d3d12_ffx.c
 d3d_video "d3d12 FSR backend, no threads" \
-   "$D3DDEFS -DHAVE_D3D12 -DHAVE_NGX -UHAVE_THREADS" gfx/common/d3d12_ffx.c
-d3d_video "d3d12 XeSS backend" "$D3DDEFS -DHAVE_D3D12 -DHAVE_NGX" \
+   "$D3DDEFS -DHAVE_D3D12 -DHAVE_TEMPORAL_UPSCALER -UHAVE_THREADS" gfx/common/d3d12_ffx.c
+d3d_video "d3d12 XeSS backend" "$D3DDEFS -DHAVE_D3D12 -DHAVE_TEMPORAL_UPSCALER" \
    gfx/common/d3d12_xess.c
 d3d_video "d3d12 XeSS backend, no threads" \
-   "$D3DDEFS -DHAVE_D3D12 -DHAVE_NGX -UHAVE_THREADS" gfx/common/d3d12_xess.c
+   "$D3DDEFS -DHAVE_D3D12 -DHAVE_TEMPORAL_UPSCALER -UHAVE_THREADS" gfx/common/d3d12_xess.c
 # With the MP4 previews: frames from rh264's D3D11 video backend,
 # imported by D3D11 and D3D12 through shared handles and fences (11.4
 # interfaces from the bundled headers), and the backend itself.
@@ -819,7 +830,7 @@ check "psp: psp_joypad"        "$PSP_DEFS $CDECL" input/drivers_joypad/psp_joypa
 check "orbis: ps4_audio"       "$HOSTOFF -Itools/platform_stubs/orbis -DORBIS $CDECL" audio/drivers/ps4_audio.c
 check "qnx: alsa_qsa"          "$HOSTOFF -Itools/platform_stubs/qnx -D__QNX__ $CDECL" audio/drivers/alsa_qsa.c
 check "android: vfs saf"       "$HOSTOFF -Itools/platform_stubs/android -DANDROID $CDECL" libretro-common/vfs/vfs_implementation_saf.c
-check "android: play delivery" "$HOSTOFF -Itools/platform_stubs/android -DANDROID $CDECL" play_feature_delivery/play_feature_delivery.c
+check "android: play delivery" "$HOSTOFF -Itools/platform_stubs/android -DANDROID $CDECL" os/android/play_feature_delivery.c
 # the Android build carries the built-in NFS client and its backend
 # (HAVE_RETRONFS in pkg/android/phoenix-common/jni/Android.mk) and the
 # prefetcher both network backends read through
@@ -903,6 +914,32 @@ salamander_link() {
 salamander_link "salamander link: rtime.c" \
    "$HOSTOFF -UHAVE_THREADS -Itools/platform_stubs/vita -DVITA -DIS_SALAMANDER -DRARCH_CONSOLE" \
    libretro-common/time/rtime.c
+
+# Every launcher's whole libretro-common list, read from its Makefile,
+# linked with frontend_salamander.c and a host frontend driver: a unit
+# in a list that calls into one the list leaves out fails the link the
+# way that launcher's would.
+salamander_objs() {
+   case "$1" in
+      Makefile.wiiu)
+         sed -n '/^ifeq ($(SALAMANDER_BUILD),1)/,/^else/p' "$1" ;;
+      *) cat "$1" ;;
+   esac | grep -oE '(libretro-common/[A-Za-z0-9_/]+|verbosity)\.o' \
+        | sed 's/\.o$/.c/' | sort -u
+}
+for mk in Makefile.*.salamander Makefile.wiiu; do
+   if ! out=$($CC $WARN $INC $BASE -UHAVE_THREADS -DIS_SALAMANDER \
+         -DRARCH_CONSOLE -DHAVE_MAIN -o /tmp/salamander_link_check \
+         tools/platform_stubs/salamander_frontend.c \
+         frontend/frontend_salamander.c $(salamander_objs "$mk") 2>&1); then
+      echo "FAIL  salamander link: $mk object set"
+      show_out "$out"
+      fail=1
+   else
+      echo "ok    salamander link: $mk object set"
+   fi
+   rm -f /tmp/salamander_link_check
+done
 
 # runloop.c under Android: runloop_idle_wait's looper branch, and every
 # other ANDROID block in the file, compiled against hermetic NDK stubs
@@ -1233,7 +1270,7 @@ font_layout "font layout: ps2" "" \
     -Wno-declaration-after-statement" \
    gfx/drivers/ps2_gfx.c
 font_layout "font layout: gx2" "" \
-   "-DWIIU $HOSTOFF -Iwiiu/include -Iwiiu -Wno-declaration-after-statement" \
+   "-DWIIU $HOSTOFF -Ios/wiiu/include -Ios/wiiu -Wno-declaration-after-statement" \
    gfx/drivers/gx2_gfx.c
 font_layout "font layout: glcore" "" \
    "-DHAVE_OPENGL -DHAVE_OPENGL_CORE -DHAVE_SLANG" gfx/drivers/gl3.c
@@ -1298,5 +1335,57 @@ platform_video "windows: vulkan back end" \
 check "windows: vulkan second output" \
    "-DHAVE_VULKAN -DHAVE_DYLIB -DHAVE_VIDEO_WINDOWS -Igfx/include" \
    gfx/common/vulkan_common.c
+
+
+# PlayStation clang declares in immintrin.h only the intrinsics of the
+# ISAs the whole build enables, so a kernel built under a per-function
+# target("avx2") or target("avx512f") that the host compiles cleanly
+# does not exist there: the PS4 has AVX alone, the PS5 AVX2 and no
+# AVX-512. Every unit carrying a per-function target or 256/512-bit
+# intrinsics is found by content rather than listed, so a new one is
+# checked the day it lands, and compiled (not only parsed) for each
+# console's own target triple, which brings that console's __SCE__ and
+# CPU baseline. Host libc headers stand in for the SDK's.
+echo "== playstation x86 SIMD units =="
+SIMD_PAT='target\("(avx|fma|sse4|bmi|f16c)|_mm256_|_mm512_'
+if git rev-parse --git-dir > /dev/null 2>&1; then
+   SIMD_TU=$(git grep -lE "$SIMD_PAT" -- '*.c' ':!deps/' ':!samples/' \
+      ':!libretro-common/samples/' ':!tools/' ':!pkg/' ':!os/' ':!wiiu/')
+else
+   SIMD_TU=$(grep -rlE --include='*.c' "$SIMD_PAT" . \
+      | sed 's|^\./||' \
+      | grep -vE '^(deps|samples|libretro-common/samples|tools|pkg|os|wiiu)/')
+fi
+SCE_CC=${SCE_CC:-clang}
+SCE_SYS="-isystem /usr/include"
+[ -d /usr/include/x86_64-linux-gnu ] \
+   && SCE_SYS="$SCE_SYS -isystem /usr/include/x86_64-linux-gnu"
+SCE_DEFS="-DRARCH_INTERNAL -DHAVE_THREADS -DHAVE_REWIND -DHAVE_CHEATS -D_BSD_SOURCE"
+for sce in "ps4 x86_64-scei-ps4 -DORBIS -Itools/platform_stubs/orbis" \
+      "ps5 x86_64-sie-ps5"; do
+   set -- $sce
+   sce_name=$1; sce_triple=$2; shift 2
+   sce_extra="$*"
+   if ! command -v "$SCE_CC" > /dev/null 2>&1 \
+         || ! "$SCE_CC" --target=$sce_triple -x c -c -o /dev/null /dev/null \
+            > /dev/null 2>&1; then
+      echo "skip  $sce_name: SIMD units (no clang for $sce_triple)"
+      continue
+   fi
+   bad=0
+   for tu in $SIMD_TU; do
+      if ! out=$("$SCE_CC" --target=$sce_triple $SCE_SYS $HOSTOFF $INC \
+            $SCE_DEFS $sce_extra \
+            -O2 -Wall -Werror=implicit-function-declaration \
+            -c -o /dev/null "$tu" 2>&1); then
+         echo "FAIL  $sce_name: SIMD units"
+         echo "      $tu"
+         show_out "$out"
+         fail=1; bad=1
+      fi
+   done
+   [ "$bad" = 1 ] \
+      || echo "ok    $sce_name: SIMD units ($(echo $SIMD_TU | wc -w) files)"
+done
 
 exit $fail

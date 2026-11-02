@@ -123,6 +123,12 @@ endif
 DEFINES += -DRARCH_MOBILE \
 	   -DHAVE_GRIFFIN \
 	   -DHAVE_RVORBIS \
+	   -DHAVE_ROPUS \
+	   -DHAVE_RAAC \
+	   -DHAVE_RMP4 \
+	   -DHAVE_RWEBM \
+	   -DHAVE_RVP9 \
+	   -DHAVE_RAV1 \
 	   -DHAVE_LANGEXTRA \
 	   -DANDROID \
 	   -DHAVE_DYNAMIC \
@@ -272,6 +278,8 @@ LOCAL_CPPFLAGS   += $(INCLUDE_DIRS)
 LOCAL_CXXFLAGS   += $(INCLUDE_DIRS)
 
 ifeq ($(HAVE_VULKAN),1)
+LOCAL_CFLAGS += -DHAVE_RECORD_MEDIACODEC
+LOCAL_CPPFLAGS += -DHAVE_RECORD_MEDIACODEC
 INCFLAGS         += $(LOCAL_PATH)/$(RARCH_DIR)/gfx/include
 
 LOCAL_C_INCLUDES += $(INCFLAGS)
@@ -288,14 +296,12 @@ ifneq ($(SANITIZER),)
    LOCAL_LDFLAGS  += -fsanitize=$(SANITIZER)
 endif
 
-ifneq ($(PLAY_STORE_BUILD),1)
-   ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
-      LOCAL_LDFLAGS += -Wl,-z,max-page-size=4096
-   endif
+ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
+   LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384,-z,common-page-size=16384
+endif
 
-   ifeq ($(TARGET_ARCH_ABI),x86_64)
-      LOCAL_LDFLAGS += -Wl,-z,max-page-size=4096
-   endif
+ifeq ($(TARGET_ARCH_ABI),x86_64)
+   LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384,-z,common-page-size=16384
 endif
 
 include $(BUILD_SHARED_LIBRARY)

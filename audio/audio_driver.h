@@ -66,16 +66,35 @@
 
 RETRO_BEGIN_DECLS
 
+/* The DSP filter and the record tap are published with pointer atomics
+ * and retired once no pass that could have read them is still running:
+ * a holder of the state lock counts itself in and out of pass_seq. A
+ * backend without pointer atomics changes them under the lock. */
+#if defined(HAVE_THREADS) && defined(RETRO_ATOMIC_HAS_PTR)
+#define AUDIO_DRIVER_PASS_EPOCH
+typedef retro_atomic_ptr_t audio_driver_ptr_t;
+#define AUDIO_DRIVER_PTR_GET(p)    retro_atomic_load_acquire_ptr(p)
+#define AUDIO_DRIVER_PTR_SET(p, v) retro_atomic_store_release_ptr(p, v)
+#else
+typedef void *audio_driver_ptr_t;
+#define AUDIO_DRIVER_PTR_GET(p)    (*(p))
+#define AUDIO_DRIVER_PTR_SET(p, v) (*(p) = (v))
+#endif
+
 #ifdef HAVE_AUDIOMIXER
 typedef struct audio_mixer_stream
 {
    audio_mixer_sound_t *handle;
    audio_mixer_voice_t *voice;
+   /* What the table does once the play has finished; run by the table's
+    * holder, never by the mix. */
    audio_mixer_stop_cb_t stop_cb;
    void *buf;
    char *name;
    size_t bufsize;
+   size_t play_serial;   /* the voice's play, for a stop to recognise it */
    float volume;
+   unsigned play_tag;    /* the sound's tag while it plays, 0 when not */
    enum audio_mixer_stream_type stream_type;
    enum audio_mixer_type type;
    enum audio_mixer_state state;
@@ -484,6 +503,11 @@ typedef struct
    uint64_t free_samples_count;
 
    struct audio_record_source *record_source;
+#if defined(HAVE_RECORD_MEDIACODEC) || defined(RECORD_AUDIO_TAP_TEST)
+   audio_driver_ptr_t record_tap;       /* struct record_audio_tap */
+   /* Taken out of record_tap, not yet past the passes that saw it. */
+   struct record_audio_tap *record_tap_detached;
+#endif
    struct string_list *devices_list;
    /* The driver whose device_list_new built devices_list, so that its
     * device_list_free is the one that releases it - not whichever
@@ -525,7 +549,10 @@ typedef struct
     */
    int16_t *sample_accum;
 #ifdef HAVE_DSP_FILTER
-   retro_dsp_filter_t *dsp;
+   audio_driver_ptr_t dsp;              /* retro_dsp_filter_t */
+   /* Filters swapped out while a pass may still run them; the main
+    * thread's, each freed once pass_seq has moved off dsp_retired_seq. */
+   retro_dsp_filter_t *dsp_retired[4];
 #endif
    const retro_resampler_t *resampler;
 
@@ -598,14 +625,9 @@ typedef struct
     * pass ends and nowhere else, so the count of notifies is the count
     * of passes however finely the producer publishes. */
    /**
-    * Held across a pipeline pass, and by the main thread whenever it
-    * changes something a pass reads: the DSP filter pointer and the
-    * mixer's voices. With the threaded pipeline a pass runs on the
-    * audio thread, so a menu action that swaps the DSP filter or
-    * starts a sound would otherwise race it - the filter free is a
-    * use-after-free window, the mixer a torn voice. Uncontended on
-    * the frame-synchronous path, where both are the same thread.
-    * Never held across a device write.
+    * Made only where the atomics have no pointer operations, which
+    * holds the DSP filter, the record tap and the mixer's table under
+    * it; see audio_driver_state_lock().
     */
    slock_t *state_lock;
    retro_eventcount_t pipe_space;
@@ -795,10 +817,33 @@ typedef struct
     * once a frame on the main thread with no audio lock held; see
     * audio_driver_take_reinit_request(). */
    retro_atomic_int_t reinit_request;
+   /* Odd while a holder of the state lock - a pass - runs. */
+   retro_atomic_int_t pass_seq;
+   /* The last flush's core format, for the mixer off the flush's thread. */
+   retro_atomic_int_t core_float_seen;
+#ifdef HAVE_DSP_FILTER
+   /* What the filter allows, for readers outside a pass: 0 none, 1 a
+    * float-only filter, 2 one with an int16 path. */
+   retro_atomic_int_t dsp_caps;
+   int dsp_retired_seq;
+#endif
+#ifdef HAVE_AUDIOMIXER
+   /* mixer_streams[] is changed by the main and task threads holding
+    * mixer_table_owner (AUDIO_MIXER_TABLE_*), and never by the mix: a
+    * play the mix finishes leaves its tag in mixer_finished[] and bumps
+    * mixer_finish_seq, and the table's next holder settles it. */
+   retro_eventcount_t mixer_table_ec;
+   retro_atomic_int_t mixer_table_owner;
+   retro_atomic_int_t mixer_finished[AUDIO_MIXER_MAX_SYSTEM_STREAMS];
+   retro_atomic_int_t mixer_finish_seq;
+   retro_atomic_int_t mixer_finish_seen;
+   retro_atomic_int_t mixer_streams_playing; /* written by the holder */
+   unsigned mixer_install_seq;
+   bool mixer_table_ec_ok;
+#endif
    bool mute_enable;
 #ifdef HAVE_AUDIOMIXER
    bool mixer_mute_enable;
-   uint8_t mixer_streams_playing;  /* Count of currently playing mixer streams */
 #endif
 
    /* Sample the flush delta-time when fast forwarding to find the correct ratio. */
@@ -947,6 +992,10 @@ typedef struct
     * fills the device with silence before writing. See
     * audio_driver_resume_topup(). */
    bool                  resume_topup_pending;
+   /* Core frames the device's writer may still drop after fast-forward,
+    * while the device plays down what it queued. See
+    * audio_driver_fastforward_end(). */
+   retro_atomic_int_t    ff_drain_frames;
 
    /* The layout the device was opened with - AUDIO_LAYOUT_STEREO
     * unless the driver reports a wider one - its channel count, and
@@ -1052,6 +1101,50 @@ typedef struct
    retro_atomic_size_t pipe_menu_to;
    retro_atomic_int_t  pipe_discard_gen;
    int                 pipe_discard_seen;
+   /* A pause's tail and a resume's reset, asked for by the main thread
+    * and carried out by the consumer, the only thread that writes to
+    * the device. Each request takes the next pipe_pause_seq into its
+    * own word; the consumer acts on what is newer than the pipe_*_seen
+    * it keeps, oldest first, and stores each once it is done.
+    * pipe_resume_topup says the resume's stream was down. */
+   retro_atomic_int_t  pipe_pause_seq;
+   retro_atomic_int_t  pipe_tail_seq;
+   retro_atomic_int_t  pipe_resume_seq;
+   retro_atomic_int_t  pipe_resume_topup;
+   retro_atomic_int_t  pipe_tail_seen;   /* stored by the consumer */
+   retro_atomic_int_t  pipe_resume_seen;
+   /* A rate change for the consumer to install, numbered as the pause
+    * requests are; the producer writes nothing into the ring until it
+    * has (audio_driver_set_input_rate()). */
+   retro_atomic_int_t  pipe_rate_seq;
+   retro_atomic_int_t  pipe_rate_seen;   /* stored by the consumer */
+   /* A transport change for the consumer to install, numbered likewise.
+    * pipe_transport_mode is the transport as the producer has decided
+    * it, which the consumer's pointers follow once it has. */
+   retro_atomic_int_t  pipe_transport_seq;
+   retro_atomic_int_t  pipe_transport_seen;
+   uint8_t             pipe_transport_mode;
+   /* A source format change for the consumer to install, likewise; the
+    * producer writes nothing into the ring until it has. */
+   retro_atomic_int_t  pipe_format_seq;
+   retro_atomic_int_t  pipe_format_seen;
+   /* Without the threaded pipeline the same requests, and a format
+    * change and a stop's reset besides, are carried out by the thread
+    * that submits the core's audio (inline_owner), or by the main
+    * thread at once when that is the one. Whoever carries them out
+    * holds inline_busy, which a submit takes too; a submit that finds
+    * the main thread holding it drops its batch rather than wait.
+    * inline_req_done is the last pipe_pause_seq carried out. */
+   retro_atomic_int_t  inline_format_seq;
+   retro_atomic_int_t  inline_format_seen;
+   retro_atomic_int_t  inline_format;     /* (multi << 1) | floating */
+   retro_atomic_int_t  inline_reset_seq;
+   retro_atomic_int_t  inline_reset_seen;
+   retro_atomic_int_t  inline_req_done;
+   retro_atomic_int_t  inline_busy;
+   retro_atomic_size_t inline_owner;      /* thread id */
+   retro_atomic_size_t inline_holder;     /* thread id, 0 when free */
+   unsigned            inline_depth;      /* the holder's */
    retro_atomic_size_t pipe_fade_in_at;
    retro_atomic_int_t  pipe_fade_in_mark;
    unsigned            pipe_fade_in_seen;
@@ -1150,6 +1243,14 @@ bool audio_driver_jump_fade_begin(void);
 void audio_driver_jump_fade_end(bool ramped);
 
 /**
+ * audio_driver_fastforward_end:
+ *
+ * Fast-forward has ended. What it queued would hold a blocking writer
+ * for as long as it takes to play out; it is dropped, faded as a jump.
+ **/
+void audio_driver_fastforward_end(void);
+
+/**
  * audio_driver_pipeline_consumer_exit:
  *
  * Called by the audio thread wrapper as its thread leaves the loop, so
@@ -1241,13 +1342,15 @@ void audio_driver_pipeline_wake(void);
  * audio_driver_state_lock:
  * audio_driver_state_unlock:
  *
- * Guards the DSP filter and the mixer against a pipeline pass on the
- * audio thread. Cheap and safe to call before the audio driver is up:
- * the lock exists for the driver's lifetime and both are no-ops
- * without it.
+ * Brackets a pass over the DSP filter, the record tap and the device;
+ * a mutex only where the atomics have no pointer operations. Cheap and
+ * safe to call before the audio driver is up.
  **/
 void audio_driver_state_lock(void);
 void audio_driver_state_unlock(void);
+struct record_audio_tap;
+int audio_driver_record_tap_install(struct record_audio_tap *tap);
+bool audio_driver_record_tap_remove(struct record_audio_tap *tap);
 
 /* Bits of audio_driver_state_t::runloop_snapshot. */
 enum audio_runloop_snapshot_bits
@@ -1332,6 +1435,9 @@ bool *audio_get_bool_ptr(enum audio_action action);
 
 #ifdef HAVE_AUDIOMIXER
 audio_mixer_stream_t *audio_driver_mixer_get_stream(unsigned i);
+
+/* Main thread, once a frame: settles the plays the mix has finished. */
+void audio_driver_mixer_reap(void);
 
 /* Main-thread transport setup: snapshot initialized mixer output format.
  * False with rate0/s16false when audio is unavailable. */
@@ -1599,6 +1705,19 @@ void audio_driver_keep_device(bool keep);
 
 /* Frees a kept device that was not taken back. */
 void audio_driver_drop_kept(void);
+
+/* Asked before a content switch's driver stage: whether the running
+ * audio can be carried into the next session as it is - device,
+ * pipeline and mixer left up, so menu sounds play through the stage -
+ * because its init would open the same device the same way for the
+ * next core. Off with RETROARCH_AUDIO_KEEP=0, as keeping is. */
+bool audio_driver_session_carry_ok(void);
+
+/* Carries the running audio into the next session at @input Hz: the
+ * rate in place, and the stream reset that a core swap asks for.
+ * Returns false when the rate cannot be taken in place; the caller
+ * then reinits the audio driver. */
+bool audio_driver_session_carry(double input);
 
 const char *audio_driver_get_ident(void);
 

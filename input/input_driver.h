@@ -618,6 +618,9 @@ struct input_driver
  * changes only in its own poll: lent to the readers between two polls
  * in place of a copy (input_driver.c, the snapshot bridge). What each
  * field holds is what button(), axis() and get_buttons() answer. */
+/* sensor sub-devices a core may address (RETRO_SENSOR_SUBDEVICE),
+ * after the controller itself */
+#define INPUT_SENSOR_SUBDEVICES 4
 #define INPUT_PAD_VIEW_AXES 16
 #define INPUT_PAD_VIEW_HATS 4
 #define INPUT_PAD_VIEW_TOUCHES 2
@@ -893,6 +896,8 @@ typedef struct
    uint32_t core_hold_gun[MAX_USERS];
    uint8_t  core_hold_pointer[MAX_USERS];
    bool core_hold_armed;
+   /* tested with core_hold_armed in the core's read */
+   bool enabler_tap_active;
    /* any of cmd_buttons or cmd_analog is held */
    bool cmd_input;
    /* The same for what the run loop and the menu see - the RetroPad
@@ -1019,6 +1024,9 @@ typedef struct
    bool platform_menu_button;
    unsigned core_accel_rate; /* >0 means core wants accel at this rate */
    unsigned core_gyro_rate;  /* >0 means core wants gyro at this rate */
+   /* the sub-devices' sensors the core has enabled: bit 2(i-1) the
+    * accelerometer of sub-device i, bit 2(i-1)+1 its gyroscope */
+   uint8_t core_sub_sensors;
    /* First-press port assignment, see input_first_press_apply():
     * buttons seen released on a user with no core port, the users to
     * map at the next frame boundary, and whether any of it is live. */
@@ -1345,8 +1353,9 @@ void input_driver_set_nonblocking(bool on);
 
 /* What a platform asks of the frontend through its input driver: the
  * home or power button, a panic combination, the system closing the
- * app, its window going away and coming back. The driver says what
- * happened; the frontend decides what is done. */
+ * app, its window going away and coming back, the content paused and
+ * resumed. The driver says what happened; the frontend decides what is
+ * done. */
 enum input_platform_request
 {
    INPUT_PLATFORM_QUIT = 0,        /* quit as the Quit hotkey does */
@@ -1354,6 +1363,8 @@ enum input_platform_request
    INPUT_PLATFORM_MENU_TOGGLE,     /* the platform's menu gesture */
    INPUT_PLATFORM_REINIT_VIDEO,    /* the window's surface was lost */
    INPUT_PLATFORM_FOCUS_LOST,      /* game focus off, mouse let go */
+   INPUT_PLATFORM_PAUSE,           /* pause the content */
+   INPUT_PLATFORM_UNPAUSE,         /* resume it */
    INPUT_PLATFORM_REQUEST_LAST
 };
 void input_driver_platform_request(enum input_platform_request req);
@@ -1536,6 +1547,14 @@ unsigned input_driver_pointer_read_as(unsigned i);
  * all; a bit in @down if it is pressed. The three are separate: a
  * contact at 0,0 is a contact, and one that has lifted may keep its
  * place (@present without @down). */
+/* Each touch's contact, as the touchscreen reports it, for touch @i
+ * of the driver's pointer: @contacts as OVERLAY_CONTACT_PACK(major,
+ * minor) in pixels, @angles its orientation in ten-thousandths of a
+ * radian, 0 upright and positive clockwise. From the driver's poll;
+ * none is had again until the next. For the overlay's D-pad and face
+ * buttons (input/common/overlay_contact.h). */
+void input_driver_publish_touch_contacts(const uint32_t *contacts,
+      const int16_t *angles, unsigned count);
 void input_driver_publish_touches(const uint32_t *pos, unsigned count,
       unsigned present, unsigned down);
 

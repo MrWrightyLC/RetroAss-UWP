@@ -41,7 +41,7 @@
 
 #ifdef __WINRT__
 #include <Fileapifromapp.h>
-#include <uwp/uwp_func.h>
+#include "../os/uwp/uwp_func.h"
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2271,6 +2271,15 @@ static void content_load_finish(struct content_load_job *job,
    runloop_st->content_switching = false;
    /* A library opened for a core stage that never took it */
    runloop_core_preload_cancel();
+#ifdef HAVE_MENU
+   /* A Load State slot asked for with this load, left over when the
+    * load failed before the content came up */
+   {
+      menu_handle_t *menu = menu_state_get_ptr()->driver_data;
+      if (menu)
+         menu->state_slot_run_pending = false;
+   }
+#endif
 
    if (ok)
       content_load_tail(job, p_content);
@@ -2519,6 +2528,14 @@ static bool content_load(content_ctx_info_t *info,
          content_load_job_free(job);
          return false;
       }
+#ifdef HAVE_MENU
+      /* The core title the menu holds while the load runs: the one
+       * this load is for, when its library is already open. */
+      {
+         char title[NAME_MAX_LENGTH + 64];
+         menu_entries_get_core_title(title, sizeof(title));
+      }
+#endif
       runloop_state_get_ptr()->content_switching = true;
       return true;
    }

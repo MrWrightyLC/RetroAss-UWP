@@ -54,6 +54,8 @@
 #include "../../tasks/tasks_internal.h"
 #include "../input_driver.h"
 #include "../common/sony_pad_output.h"
+#include "../common/input_ignore_devices.h"
+#include "../common/win_pad_ident.h"
 #include "../common/hid_sjoy_output.h"
 #include "../common/output_writer.h"
 #include "../common/sony_pad_motion.h"
@@ -177,6 +179,9 @@ typedef struct winraw_joypad_joypad_data
    /* Which of XInput's pads this is, or -1 for one read from raw
     * input. See winraw_joypad_xinput_rescan(). */
    int8_t              xuser;
+   /* A DualShock 4's or DualSense's Bluetooth address, read from either
+    * link; 0 for any other pad */
+   uint64_t            link_addr;
    uint8_t             motion_model; /* enum sony_pad_model, or none    */
    uint8_t             motion_on;    /* bit 0 accelerometer, 1 gyroscope */
    bool                motion_seen;  /* a report has had them            */
@@ -198,6 +203,11 @@ typedef struct winraw_joypad_joypad_data
 
 /* TODO/FIXME - static globals */
 static winraw_joypad_joypad_data_t winraw_joypad_pads[MAX_USERS];
+/* A pad's other link - its cable, while it is on Bluetooth too - not
+ * read while the first is there, and the pad's when it goes */
+static HANDLE winraw_joypad_twin[MAX_USERS];
+/* the slot the next pad added takes: a twin taking over */
+static int winraw_joypad_slot_wanted = -1;
 /* the motion sensors a core has asked of each port (bit 0 the
  * accelerometer, 1 the gyroscope): kept while pads come and go */
 static uint8_t winraw_joypad_motion_want[MAX_USERS];
@@ -205,10 +215,8 @@ static unsigned winraw_joypad_pad_count          = 0;
 static HWND     winraw_joypad_msg_window         = NULL;
 static bool     winraw_joypad_initialised        = false;
 
-/* Read by the poll (see the note above winraw_joypad_joypad_poll()):
- * whether it is, the thread the window was then made on, and whether
- * making it failed. */
-static bool     winraw_joypad_by_poll            = false;
+/* The thread the window was made on (see the note above
+ * winraw_joypad_poll_window_up()), and whether making it failed. */
 static DWORD    winraw_joypad_window_tid         = 0;
 static bool     winraw_joypad_window_failed      = false;
 /* Polls since the window's own messages were last looked for. */
@@ -235,7 +243,6 @@ static unsigned long winraw_joypad_reports_taken;
 static unsigned long winraw_joypad_reports_parsed;
 
 /* winraw_input.c */
-extern bool winraw_raw_input_polled(void);
 extern void winraw_queue_read(void);
 extern void winraw_queue_claim_thread(bool claim);
 
@@ -964,8 +971,7 @@ static void winraw_joypad_out_open(unsigned slot,
    enum sony_pad_model model = sony_pad_model(vid, pid);
    /* Windows marks the HID device of a pad it drives through XInput
     * with "IG_" in its path */
-   bool xinput               = path
-      && (strstr(path, "IG_") || strstr(path, "ig_"));
+   bool xinput               = win_pad_path_is_xinput(path);
    /* a DualShock 3 with a feature report the size of its state */
    bool sixaxis              = vid == 0x054C && pid == 0x0268
       && feature_len >= 49 && feature_len <= WINRAW_SIXAXIS_LEN;
@@ -1015,9 +1021,7 @@ static void winraw_joypad_out_open(unsigned slot,
             return;
          }
       }
-      dev->bluetooth  =
-            strstr(path, "00001124-0000-1000-8000-00805f9b34fb") != NULL
-         || strstr(path, "00001124-0000-1000-8000-00805F9B34FB") != NULL;
+      dev->bluetooth  = win_pad_path_is_bluetooth(path);
    }
 
    if (!xinput && model == SONY_PAD_DUALSENSE)
@@ -1200,11 +1204,6 @@ static bool                      winraw_joypad_xinput_own;
 static HMODULE                   winraw_joypad_xi_dll;
 static winraw_xinput_get_state_t winraw_joypad_xi_get_state;
 
-static bool winraw_joypad_path_is_xinput(const char *path)
-{
-   return path && (strstr(path, "IG_") || strstr(path, "ig_"));
-}
-
 /* pad_count is the highest connected slot + 1: left to grow, stale
  * slots would look in use to autoconfig during a reconnect. */
 static void winraw_joypad_recount(void)
@@ -1358,6 +1357,8 @@ static bool winraw_joypad_handle_alive(HANDLE hDevice)
 static bool winraw_joypad_add_device(HANDLE hDevice)
 {
    int slot;
+   unsigned t;
+   uint64_t link_addr;
    char device_path[512];
    RID_DEVICE_INFO dev_info;
    UINT name_size                   = 0;
@@ -1370,6 +1371,9 @@ static bool winraw_joypad_add_device(HANDLE hDevice)
    /* Already tracked? */
    if (winraw_joypad_find_pad(hDevice) >= 0)
       return true;
+   for (t = 0; t < MAX_USERS; t++)
+      if (winraw_joypad_twin[t] == hDevice)
+         return true;
 
    /* Get device info to check it is a HID gamepad/joystick */
    dev_info.cbSize = sizeof(dev_info);
@@ -1387,6 +1391,11 @@ static bool winraw_joypad_add_device(HANDLE hDevice)
        && dev_info.hid.usUsage != HID_USAGE_GENERIC_GAMEPAD)
       return false;
 
+   /* Another program reads it and stands in for it (Steam Input) */
+   if (input_device_ignored((uint16_t)dev_info.hid.dwVendorId,
+            (uint16_t)dev_info.hid.dwProductId))
+      return false;
+
    /* The device path, which says which physical controller this is. */
    device_path[0] = '\0';
    GetRawInputDeviceInfoA(hDevice, RIDI_DEVICENAME, NULL, &name_size);
@@ -1399,12 +1408,33 @@ static bool winraw_joypad_add_device(HANDLE hDevice)
 
    /* XInput's to read, not raw input's: XInput's pads are looked at
     * again, this one among them. */
-   if (     winraw_joypad_xinput_own
-         && winraw_joypad_path_is_xinput(device_path))
+   if (win_pad_owner(winraw_joypad_xinput_own
+            ? WIN_PAD_DRV_WINRAW_XINPUT : WIN_PAD_DRV_WINRAW,
+            device_path, true, false) == WIN_PAD_VIEW_XINPUT)
    {
       winraw_joypad_xinput_rescan();
       return false;
    }
+
+   /* The other link of a pad already here - its cable plugged in while
+    * it is on Bluetooth - is the same pad, in the same port */
+   link_addr = win_pad_sony_addr(device_path,
+         (uint16_t)dev_info.hid.dwVendorId,
+         (uint16_t)dev_info.hid.dwProductId);
+   if (link_addr)
+      for (t = 0; t < MAX_USERS; t++)
+         if (     winraw_joypad_pads[t].connected
+               && winraw_joypad_pads[t].link_addr == link_addr
+               && !winraw_joypad_twin[t])
+         {
+            winraw_joypad_twin[t] = hDevice;
+            RARCH_LOG("[RawInput Joypad] \"%s\" in slot %u has a second"
+                  " link (%s); it stays one pad.\n",
+                  winraw_joypad_pads[t].name, t,
+                  win_pad_path_is_bluetooth(device_path)
+                  ? "Bluetooth" : "USB");
+            return true;
+         }
 
    /* ---- Handle reconnection race condition ----
     * Windows can send GIDC_ARRIVAL for a newly-assigned handle *before*
@@ -1463,7 +1493,13 @@ static bool winraw_joypad_add_device(HANDLE hDevice)
          }
       }
 
-      slot = (reuse_slot >= 0) ? reuse_slot : winraw_joypad_find_free_slot();
+      if (reuse_slot >= 0)
+         slot = reuse_slot;
+      else if (   winraw_joypad_slot_wanted >= 0
+               && !winraw_joypad_pads[winraw_joypad_slot_wanted].connected)
+         slot = winraw_joypad_slot_wanted;
+      else
+         slot = winraw_joypad_find_free_slot();
    }
    if (slot < 0)
    {
@@ -1479,7 +1515,8 @@ static bool winraw_joypad_add_device(HANDLE hDevice)
    pad->pid     = (uint16_t)dev_info.hid.dwProductId;
 
    strlcpy(pad->path, device_path, sizeof(pad->path));
-   pad->xuser = -1;
+   pad->xuser     = -1;
+   pad->link_addr = link_addr;
 
    /* --- Open the device path for the product string --- */
    if (device_path[0])
@@ -1646,21 +1683,33 @@ static bool winraw_joypad_add_device(HANDLE hDevice)
 
 static void winraw_joypad_remove_device(HANDLE hDevice)
 {
+   HANDLE twin;
    int slot = winraw_joypad_find_pad(hDevice);
    if (slot < 0)
    {
+      unsigned t;
+      for (t = 0; t < MAX_USERS; t++)
+         if (winraw_joypad_twin[t] == hDevice)
+         {
+            winraw_joypad_twin[t] = NULL;
+            return;
+         }
       /* not one of raw input's pads: it may have been XInput's */
       winraw_joypad_xinput_rescan();
       return;
    }
 
+   twin                     = winraw_joypad_twin[slot];
+   winraw_joypad_twin[slot] = NULL;
    {
       winraw_joypad_joypad_data_t *pad = &winraw_joypad_pads[slot];
 
       RARCH_LOG("[RawInput Joypad] Device removed from slot %d: \"%s\".\n",
             slot, pad->name);
 
-      input_autoconfigure_disconnect((unsigned)slot, pad->name);
+      /* its other link carries on in its port: no disconnect */
+      if (!twin)
+         input_autoconfigure_disconnect((unsigned)slot, pad->name);
       winraw_joypad_out_close((unsigned)slot);
 
       if (pad->btn_caps)
@@ -1675,6 +1724,12 @@ static void winraw_joypad_remove_device(HANDLE hDevice)
       winraw_joypad_held[slot].count = 0;
    }
 
+   if (twin)
+   {
+      winraw_joypad_slot_wanted = slot;
+      winraw_joypad_add_device(twin);
+      winraw_joypad_slot_wanted = -1;
+   }
    winraw_joypad_recount();
 }
 
@@ -2175,29 +2230,16 @@ static void *winraw_joypad_joypad_init(void *data)
 {
    memset(winraw_joypad_pads, 0, sizeof(winraw_joypad_pads));
    memset(winraw_joypad_held, 0, sizeof(winraw_joypad_held));
+   memset(winraw_joypad_twin, 0, sizeof(winraw_joypad_twin));
    winraw_joypad_sixaxis_init();
    winraw_joypad_pad_count      = 0;
    winraw_joypad_reports_taken  = 0;
    winraw_joypad_reports_parsed = 0;
 
-   /* Read by the poll: the window is made by the first poll, so that
-    * it is the polling thread's. This runs on whichever thread starts
-    * the input driver - the video thread, under threaded video. */
-   winraw_joypad_by_poll       = winraw_raw_input_polled();
+   /* The window is made by the first poll, so that it is the polling
+    * thread's. This runs on whichever thread starts the input driver -
+    * the video thread, under threaded video. */
    winraw_joypad_window_failed = false;
-
-   if (!winraw_joypad_by_poll)
-   {
-      if (!winraw_joypad_create_msg_window())
-         return NULL;
-
-      if (!winraw_joypad_register_devices())
-      {
-         DestroyWindow(winraw_joypad_msg_window);
-         winraw_joypad_msg_window = NULL;
-         return NULL;
-      }
-   }
 
 #if defined(HAVE_DINPUT) || defined(HAVE_WINRAWINPUT)
    winraw_joypad_xinput_own = input_config_get_winraw_xinput_enable();
@@ -2242,6 +2284,7 @@ static void winraw_joypad_joypad_destroy(void)
 
    memset(winraw_joypad_pads, 0, sizeof(winraw_joypad_pads));
    memset(winraw_joypad_held, 0, sizeof(winraw_joypad_held));
+   memset(winraw_joypad_twin, 0, sizeof(winraw_joypad_twin));
    winraw_joypad_pad_count = 0;
 
    if (winraw_joypad_xi_dll)
@@ -2252,27 +2295,24 @@ static void winraw_joypad_joypad_destroy(void)
 
    if (winraw_joypad_msg_window)
    {
-      /* A window is destroyed by the thread that made it. Read by the
-       * poll, that is the polling thread - and this can be another:
-       * a controller plugged in restarts the driver from the main
-       * window's thread. The window is then asked to close, and goes
-       * when its own thread next pumps. */
-      if (     winraw_joypad_by_poll
-            && GetCurrentThreadId() != winraw_joypad_window_tid)
+      /* A window is destroyed by the thread that made it, the polling
+       * thread - and this can be another: a controller plugged in
+       * restarts the driver from the main window's thread. The window
+       * is then asked to close, and goes when its own thread next
+       * pumps. */
+      if (GetCurrentThreadId() != winraw_joypad_window_tid)
          PostMessageA(winraw_joypad_msg_window, WM_CLOSE, 0, 0);
       else
          DestroyWindow(winraw_joypad_msg_window);
-      if (winraw_joypad_by_poll)
-         winraw_queue_claim_thread(false);
+      winraw_queue_claim_thread(false);
       winraw_joypad_msg_window = NULL;
    }
 
    winraw_joypad_initialised = false;
 
-   if (winraw_joypad_by_poll)
-      RARCH_DBG("[RawInput Joypad] Read by the poll: %lu reports read in bulk,"
-            " %lu parsed.\n",
-            winraw_joypad_reports_taken, winraw_joypad_reports_parsed);
+   RARCH_DBG("[RawInput Joypad] Read by the poll: %lu reports read in bulk,"
+         " %lu parsed.\n",
+         winraw_joypad_reports_taken, winraw_joypad_reports_parsed);
    RARCH_LOG("[RawInput Joypad] Destroyed.\n");
 }
 
@@ -2318,12 +2358,11 @@ static int32_t winraw_joypad_joypad_button(unsigned port, uint16_t joykey)
    return 0;
 }
 
-/* Lent where the reports are read in the poll, which is then the only
- * place a pad's state changes; under the window of its own, read on
- * whichever thread made it, it is copied. */
+/* Lent: the reports are read in the poll, the only place a pad's state
+ * changes. */
 static const input_pad_view_t *winraw_joypad_joypad_view(unsigned port)
 {
-   if (port >= MAX_USERS || !winraw_joypad_by_poll)
+   if (port >= MAX_USERS)
       return NULL;
    return &winraw_joypad_pads[port].view;
 }
@@ -2493,36 +2532,19 @@ static int16_t winraw_joypad_joypad_state(
 
 /* Read by the poll
  * ----------------
- * A controller's reports used to be taken wherever this driver's
- * window happened to be pumped. The window was made by init, on the
- * thread that starts the input driver; under threaded video that is
- * the video thread, so the PeekMessage() below, called from the main
- * thread, found nothing, and the reports were taken by the video
- * thread's pump: once per video frame, a PeekMessage() and a
- * GetRawInputData() apiece, and not at all while that thread waited
- * in a present. The poll then read whatever state that had left - a
- * stick or a button up to a frame old.
- *
- * Now, as for the keyboard and mouse (winraw_input.c, "Read by the
- * poll"), the window is made by the first poll, on the polling
- * thread, and the reports waiting are read in bulk when the poll
- * asks: the state is what the controller had sent at that moment, and
- * a frame's reports cost one call instead of two each - and one
- * parse, of the newest, instead of one each
- * (winraw_joypad_take_hid()). The read is
- * the keyboard and mouse driver's own - one read takes everything
- * waiting on the thread, and hands this driver its share through
- * winraw_joypad_take_hid() - so the two drivers make one read between
- * them. With another input driver this is the only reader.
+ * The window is made by the first poll, on the polling thread, and the
+ * reports waiting are read in bulk when the poll asks, by the keyboard
+ * and mouse driver's read (winraw_queue_read()): one read takes
+ * everything waiting on the thread and hands this driver its share
+ * through winraw_joypad_take_hid(), and only the newest report of each
+ * is parsed. With another input driver this is the only reader.
  *
  * Arrivals and removals stay messages. They come through the raw
  * input queue, which a range without WM_INPUT in it does not look at,
  * so the thread's pump - which leaves raw input alone - does not see
  * them, and they are taken here, every eighth poll. The range also
  * lets through a report that arrived since the read; the window
- * procedure takes that as it always did.
- *
- * RETROARCH_RAWINPUT_POLL=0 puts both drivers back as they were. */
+ * procedure takes that. */
 static bool winraw_joypad_poll_window_up(void)
 {
    if (!winraw_joypad_create_msg_window())
@@ -2541,12 +2563,11 @@ static bool winraw_joypad_poll_window_up(void)
    return true;
 }
 
-/* Whether this driver can be kept across a video driver restart: when
- * read by the poll - its window is then the polling thread's, and it
- * holds nothing of the video driver's. */
+/* Kept across a video driver restart: its window is the polling
+ * thread's, and it holds nothing of the video driver's. */
 static bool winraw_joypad_survives_video(void)
 {
-   return winraw_joypad_initialised && winraw_joypad_by_poll;
+   return winraw_joypad_initialised;
 }
 
 /* "Controller Player Lights": each pad's lights show the port it is
@@ -2600,46 +2621,36 @@ static void winraw_joypad_joypad_poll(void)
    if (winraw_joypad_sixaxis_count)
       winraw_joypad_sixaxis_take();
 
-   if (winraw_joypad_by_poll)
+   if (     !winraw_joypad_msg_window
+         && !winraw_joypad_window_failed
+         && !winraw_joypad_poll_window_up())
    {
-      if (     !winraw_joypad_msg_window
-            && !winraw_joypad_window_failed
-            && !winraw_joypad_poll_window_up())
-      {
-         winraw_joypad_window_failed = true;
-         RARCH_ERR("[RawInput Joypad] Could not make the window to read through.\n");
-      }
-
-      winraw_queue_read();
-      /* the newest report of each controller, once */
-      winraw_joypad_parse_held();
-
-      /* Arrivals and removals: looked for every eighth poll, not
-       * every one. A controller plugged in is noticed at most seven
-       * polls later - some 60 ms at 120 polls a second - and seven
-       * polls in eight are a call shorter. The range has to have WM_INPUT in
-       * it for the raw input queue to be looked at at all, so the look
-       * can also hand over a report - and under Wine it hands over the
-       * keyboard's and the mouse's, whichever window is asked for,
-       * which is where their reports "taken as messages" came from
-       * with video not threaded. Either way the window procedures take
-       * what they are given. */
-      if (     winraw_joypad_msg_window
-            && ++winraw_joypad_polls_since_look >= 8)
-      {
-         winraw_joypad_polls_since_look = 0;
-         while (PeekMessageA(&msg, winraw_joypad_msg_window,
-                  WM_INPUT_DEVICE_CHANGE, WM_INPUT, PM_REMOVE))
-            DispatchMessageA(&msg);
-      }
-      return;
+      winraw_joypad_window_failed = true;
+      RARCH_ERR("[RawInput Joypad] Could not make the window to read through.\n");
    }
 
-   /* Drain all pending messages for our hidden window.
-    * TranslateMessage is omitted — we only handle WM_INPUT and
-    * WM_INPUT_DEVICE_CHANGE, neither of which needs key translation. */
-   while (PeekMessageA(&msg, winraw_joypad_msg_window, 0, 0, PM_REMOVE))
-      DispatchMessageA(&msg);
+   winraw_queue_read();
+   /* the newest report of each controller, once */
+   winraw_joypad_parse_held();
+
+   /* Arrivals and removals: looked for every eighth poll, not
+    * every one. A controller plugged in is noticed at most seven
+    * polls later - some 60 ms at 120 polls a second - and seven
+    * polls in eight are a call shorter. The range has to have WM_INPUT in
+    * it for the raw input queue to be looked at at all, so the look
+    * can also hand over a report - and under Wine it hands over the
+    * keyboard's and the mouse's, whichever window is asked for,
+    * which is where their reports "taken as messages" came from
+    * with video not threaded. Either way the window procedures take
+    * what they are given. */
+   if (     winraw_joypad_msg_window
+         && ++winraw_joypad_polls_since_look >= 8)
+   {
+      winraw_joypad_polls_since_look = 0;
+      while (PeekMessageA(&msg, winraw_joypad_msg_window,
+               WM_INPUT_DEVICE_CHANGE, WM_INPUT, PM_REMOVE))
+         DispatchMessageA(&msg);
+   }
 }
 
 static const char *winraw_joypad_joypad_name(unsigned port)

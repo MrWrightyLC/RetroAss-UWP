@@ -105,7 +105,6 @@ static const struct
    char s_7607974d[19];
    char s_bdf1165f[36];
    char s_6a15d029[26];
-   char s_3817de39[435];
    char s_16ae54ac[371];
    char s_b3e89428[297];
    char s_7af11c30[109];
@@ -1563,6 +1562,7 @@ static const struct
    char s_e6e43c7d[51];
    char s_c1ddd207[52];
    char s_ded83500[37];
+   char s_69c06e41[9];
    char s_690802fe[28];
    char s_7895cc5b[26];
    char s_e46faa42[24];
@@ -2066,7 +2066,6 @@ static const struct
    char s_df763da7[14];
    char s_69dad0e6[68];
    char s_1532af95[55];
-   char s_03fb590d[27];
    char s_7c2f8b04[35];
    char s_fdbd73a3[30];
    char s_b443c25e[16];
@@ -2409,6 +2408,8 @@ static const struct
 #endif
 #endif
    char s_f4341e25[37];
+   char s_e09bad69[12];
+   char s_f66c7b67[12];
    char s_cc973e8a[8];
    char s_b9d37039[182];
    char s_1249554a[19];
@@ -2477,9 +2478,17 @@ static const struct
    char s_0cfd4fd0[9];
    char s_d64659c4[9];
    char s_0861dea4[21];
+   char s_fa462638[16];
+   char s_29f97e35[9];
+   char s_569b0627[6];
+   char s_99b1b2f6[8];
+   char s_569b11b0[12];
+   char s_328ddae3[12];
    char s_d7deafe0[26];
    char s_83217fd0[15];
    char s_60258de0[9];
+   char s_5410e874[9];
+   char s_9eb59c3e[12];
    char s_34b2592a[12];
    char s_be406532[24];
    char s_13ce50e1[21];
@@ -2533,6 +2542,7 @@ static const struct
    char s_f387bafb[21];
    char s_2c868ae4[12];
    char s_9c535394[10];
+   char s_3253994e[9];
    char s_c992346c[35];
    char s_580e244f[7];
    char s_a9c8430e[15];
@@ -3012,7 +3022,6 @@ static const struct
    char s_aa771128_1[9];
    char s_e531c55e[175];
    char s_deab66ee[181];
-   char s_5ce79fca[196];
 #ifdef HAVE_GAME_AI
    char s_b7dcc585[37];
    char s_328f4fd8[22];
@@ -3747,7 +3756,6 @@ static const struct
    char s_34a76adb[60];
    char s_88021a14[200];
    char s_fe1a9203[326];
-   char s_2222a23b[125];
    char s_8213bb32[278];
    char s_48462dac[385];
    char s_631de1a2[120];
@@ -3773,7 +3781,6 @@ static const struct
    char s_a55bf936[39];
    char s_c519f84d[46];
    char s_48aefa30[39];
-   char s_5d383a58[53];
    char s_dcf8bd8b[49];
    char s_bce9b94f[57];
    char s_d32f5a63[46];
@@ -4326,7 +4333,6 @@ static const struct
    char s_9e5bd759[35];
    char s_b880bab5[67];
    char s_8d7296ed[44];
-   char s_21580d7c[118];
    char s_fc5e1d2c[64];
    char s_51b22327[43];
    char s_2f6a6e51[22];
@@ -4529,6 +4535,7 @@ static const struct
    char s_8ab54d62[117];
    char s_aa554847[19];
    char s_ac2c797c[22];
+   char s_c52621db[6];
    char s_c5fee1cb[73];
    char s_3fe94404[5];
    char s_272dccbd[20];
@@ -4851,11 +4858,6 @@ static const struct
    "Fichier de shader.",
    "Fichier de pr\303\251r\303\251glages de shader.",
    "Fichier de configuration.",
-   "Activer le GameMode de Linux peut am\303\251liorer la latence, corriger les probl\303\250mes de "
-   "cr\303\251pitements audio et maximiser les performances globales en configurant automatiquement "
-   "votre processeur et votre processeur graphique pour les meilleures performances.\nLe logiciel Ga"
-   "meMode doit \303\252tre install\303\251 pour que cela fonctionne. Consultez https://github.com/F"
-   "eralInteractive/gamemode pour plus d'informations sur l'installation de GameMode.",
    "Mappe le stick analogique sp\303\251cifi\303\251 pour les entr\303\251es de la croix directionne"
    "lle.\nSi le c\305\223ur prend en charge l'analogique nativement, le mappage de la croix directio"
    "nnelle sera d\303\251sactiv\303\251 sauf si une option '(Forc\303\251)' est s\303\251lectionn"
@@ -6548,6 +6550,7 @@ static const struct
    "(Paysage) Ajustement d'aspect de la surimpression ",
    "(Portrait) Ajustement d'aspect de la surimpression ",
    "Charger la surimpression pr\303\251f\303\251r\303\251e",
+   "Les deux",
    "Surimpressions \303\240 l'\303\251cran ",
    "Pistolet en surimpression",
    "Souris en surimpression",
@@ -7061,7 +7064,6 @@ static const struct
    "Personnalis\303\251",
    "Ignorer les r\303\251f\303\251rences en base de donn\303\251es de la liste de lecture",
    "L'analyse v\303\251rifie le CRC en cas de doublons possibles",
-   "Analyser un fichier unique",
    "Liste de lecture \303\240 mettre \303\240 jour",
    "<Automatique/nom du syst\303\250me>",
    "<Personnalis\303\251>",
@@ -7404,6 +7406,8 @@ static const struct
 #endif
 #endif
    "D\303\251sactiver la composition de bureau",
+   "Par d\303\251faut",
+   "Par d\303\251faut",
    "Vid\303\251o ",
    "Votre pilote graphique n'est pas compatible avec le pilote vid\303\251o actuel de RetroArch, ret"
    "our au pilote %s. Veuillez red\303\251marrer RetroArch pour que les modifications prennent effet"
@@ -7475,9 +7479,17 @@ static const struct
    "Combin\303\251",
    "S\303\251par\303\251",
    "Distance de l'\303\251cran",
+   "Mettre en pause",
+   "\303\211lev\303\251e",
+   "Basse",
+   "Moyenne",
+   "D\303\251sactiv\303\251",
+   "D\303\251sactiv\303\251",
    "Sortie du casque (OpenXR)",
    "Pointeur laser",
    "Toujours",
+   "Toujours",
+   "D\303\251sactiv\303\251",
    "D\303\251sactiv\303\251",
    "Emplacement de l'\303\251cran",
    "Fix\303\251 dans la pi\303\250ce",
@@ -7531,6 +7543,7 @@ static const struct
    "Disposition d'\303\251cran",
    "Horizontale",
    "Verticale",
+   "\303\211chelle",
    "Changement de mode d'affichage SDL",
    "Vid\303\251o",
    "Shaders vid\303\251o",
@@ -8281,9 +8294,6 @@ static const struct
    "Ajuster le niveau de journalisation pour l'interface graphique. Si un niveau de journalisation "
    "\303\251mis par l'interface graphique est inf\303\251rieur \303\240 cette valeur, il est alors i"
    "gnor\303\251.",
-   "Peut am\303\251liorer les performances, r\303\251duire la latence et corriger les probl\303\250m"
-   "es de cr\303\251pitements audio. Vous avez besoin de https://github.com/FeralInteractive/gamemod"
-   "e pour que cela fonctionne.",
 #ifdef HAVE_GAME_AI
    "Sous-label remplacement du joueur IA",
    "Remplace le joueur 01",
@@ -9652,8 +9662,6 @@ static const struct
    "/PSN. En se basant uniquement sur le num\303\251ro de s\303\251rie, l'analyse peut parfois mettr"
    "e du contenu dans le mauvais syst\303\250me. Ce r\303\251glage ajoute une v\303\251rification CR"
    "C, qui ralentit consid\303\251rablement l'analyse, mais peut la rendre plus pr\303\251cise.",
-   "Analyser un seul fichier au lieu d'un dossier. Res\303\251lectionnez l'emplacement du contenu ap"
-   "r\303\250s avoir modifi\303\251 cette entr\303\251e.",
    "Les r\303\251sultats sont ajout\303\251s \303\240 cette liste de lecture. Dans le cas de Auto - "
    "Toute, plusieurs listes de lecture syst\303\250me peuvent \303\252tre mises \303\240 jour. Perso"
    "nnalis\303\251 sans r\303\251f\303\251rence en base de donn\303\251es ne liera pas les entr\303"
@@ -9688,7 +9696,6 @@ static const struct
    "Afficher les r\303\251glages pour 'Latence'.",
    "Afficher les r\303\251glages pour 'Journalisation'.",
    "Afficher les r\303\251glages pour 'R\303\251seau'.",
-   "Afficher les r\303\251glages pour 'Affichage \303\240 l'\303\251cran'.",
    "Afficher les r\303\251glages pour 'Listes de lecture'.",
    "Afficher les r\303\251glages pour 'Gestion de l'alimentation'.",
    "Afficher les r\303\251glages pour 'Enregistrement'.",
@@ -10591,8 +10598,6 @@ static const struct
    "\303\211chec \303\240 la cr\303\251ation du dossier.",
    "\303\211chec de la d\303\251sactivation des \303\251tats d'inactivit\303\251 du processeur",
    "Impossible de passer en mode jeu (GameMode)",
-   "Impossible de passer en mode jeu (GameMode) - assurez-vous que le daemon GameMode est install"
-   "\303\251/en cours d'ex\303\251cution",
    "\303\211chec \303\240 l'extraction de contenu depuis le fichier compress\303\251.",
    "\303\211chec \303\240 l'obtention du pseudo du client.",
    "\303\211chec de chargement.",
@@ -10811,6 +10816,7 @@ static const struct
    "\303\251 essay\303\251s pour cette entr\303\251e de liste de lecture.",
    "C\305\223urs ignor\303\251s : ",
    "C\305\223urs mis \303\240 jour : ",
+   "Menu ",
    "La sortie du casque n'a pas pu d\303\251marrer. La fen\303\252tre affiche la sortie.",
    "Plat",
    "Pointeur laser : %s",
@@ -11029,7 +11035,7 @@ static const struct
  * compiler that pads this struct fails here instead of
  * misindexing at runtime. */
 typedef char msg_hash_fr_blob_check[
-      (sizeof(msg_hash_fr_blob) == (258880u
+      (sizeof(msg_hash_fr_blob) == (258058u
 #ifdef ANDROID
        + 373u
 #endif
@@ -11694,7 +11700,6 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_FILE_BROWSER_SHADER,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_FILE_BROWSER_SHADER_PRESET,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_FILE_CONFIG,
-   (msg_hash_id_t)MENU_ENUM_LABEL_HELP_GAMEMODE_ENABLE,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_INPUT_ADC_TYPE,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_INPUT_DRIVER_LINUXRAW,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_INPUT_DRIVER_NO_DETAILS,
@@ -13144,6 +13149,7 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_ASPECT_ADJUST_LANDSCAPE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_ASPECT_ADJUST_PORTRAIT,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_AUTOLOAD_PREFERRED,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_CONTACT_METHOD_BOTH,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_DIRECTORY,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_LIGHTGUN_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_MOUSE_SETTINGS,
@@ -13646,7 +13652,6 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_METHOD_CUSTOM,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_OMIT_DB_REF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_SERIAL_AND_CRC,
-   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_SINGLE_FILE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_TARGET_PLAYLIST,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_TARGET_PLAYLIST_AUTO_ANY,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_TARGET_PLAYLIST_CUSTOM,
@@ -13989,6 +13994,8 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
 #endif
 #endif
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DISABLE_COMPOSITION,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_PRESET_DEFAULT,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_STYLE_DEFAULT,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DRIVER,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DRIVER_FALLBACK,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DXGI_PRESENT,
@@ -14057,9 +14064,17 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_CONTROLLERS_COMBINED,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_CONTROLLERS_SEPARATE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_DISTANCE,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_PAUSE_ON,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_HIGH,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_LOW,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_MEDIUM,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_OFF,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SNAP_ANGLES_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_ENABLE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_ALWAYS,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_ALWAYS,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_PLACEMENT,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_PLACEMENT_FIXED,
@@ -14113,6 +14128,7 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCREEN_LAYOUT,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCREEN_LAYOUT_HORIZONTAL,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCREEN_LAYOUT_VERTICAL,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCREEN_XR_SCALE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SDL_DISPLAY_SERVER,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SHADERS_ENABLE,
@@ -14579,7 +14595,6 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_FRAME_TIME_COUNTER_AUTO_RESET,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_FRAME_TIME_COUNTER_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_FRONTEND_LOG_LEVEL,
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_GAMEMODE_ENABLE_LINUX,
 #ifdef HAVE_GAME_AI
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_GAME_AI_MENU_OPTION,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_GAME_AI_OVERRIDE_P1,
@@ -15312,7 +15327,6 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_METHOD,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_OMIT_DB_REF,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_SERIAL_AND_CRC,
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_SINGLE_FILE,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_TARGET_PLAYLIST,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_USE_DB,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_WITHOUT_CORE_MATCH,
@@ -15338,7 +15352,6 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_LATENCY,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_LOGGING,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_NETWORK,
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_ONSCREEN_DISPLAY,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_PLAYLISTS,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_POWER_MANAGEMENT,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_RECORDING,
@@ -15884,7 +15897,6 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
    (msg_hash_id_t)MSG_FAILED_TO_CREATE_THE_DIRECTORY,
    (msg_hash_id_t)MSG_FAILED_TO_DISABLE_IDLE_STATES,
    (msg_hash_id_t)MSG_FAILED_TO_ENTER_GAMEMODE,
-   (msg_hash_id_t)MSG_FAILED_TO_ENTER_GAMEMODE_LINUX,
    (msg_hash_id_t)MSG_FAILED_TO_EXTRACT_CONTENT_FROM_COMPRESSED_FILE,
    (msg_hash_id_t)MSG_FAILED_TO_GET_NICKNAME_FROM_CLIENT,
    (msg_hash_id_t)MSG_FAILED_TO_LOAD,
@@ -16087,6 +16099,7 @@ static const msg_hash_id_t msg_hash_fr_ids[] =
    (msg_hash_id_t)MSG_NO_THUMBNAIL_DOWNLOAD_POSSIBLE,
    (msg_hash_id_t)MSG_NUM_CORES_LOCKED,
    (msg_hash_id_t)MSG_NUM_CORES_UPDATED,
+   (msg_hash_id_t)MSG_OPENXR_EDIT_TAG_MENU,
    (msg_hash_id_t)MSG_OPENXR_FAILED,
    (msg_hash_id_t)MSG_OPENXR_HEADSET_VIEW_FLAT,
    (msg_hash_id_t)MSG_OPENXR_LASER_POINTER,

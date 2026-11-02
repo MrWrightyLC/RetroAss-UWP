@@ -64,6 +64,13 @@ jobs:
           python3 samples/gfx/videotoolbox_hevc/run.py --threadless
           CFLAGS='-DRETRO_ATOMIC_FORCE_VOLATILE -DRETRO_ATOMIC_SUPPRESS_WARNING' python3 samples/gfx/videotoolbox_hevc/run.py
           TSAN_OPTIONS=halt_on_error=1 CFLAGS='-fsanitize=thread -fno-omit-frame-pointer' RUNNER="setarch $(uname -m) -R" python3 samples/gfx/videotoolbox_hevc/run.py
+      - name: VideoToolbox VP9 lifecycle and retained renderer snapshots
+        run: |
+          for compiler in gcc clang; do
+            CC="$compiler" make -C samples/gfx/videotoolbox_vp9 clean check SANITIZER=address,undefined
+          done
+          TSAN_OPTIONS=halt_on_error=1 CFLAGS='-fsanitize=thread -fno-omit-frame-pointer' RUNNER="setarch $(uname -m) -R" python3 samples/gfx/videotoolbox_vp9/run.py
+
       - name: Native recording reinit ownership
         run: |
           make -C samples/record/gpu_reinit check CC=gcc SANITIZER=address,undefined
@@ -379,11 +386,16 @@ jobs:
           # request, a frame's feature and dispatch on the frame's list
           # with the output read back, resizes retiring the old output,
           # refused frames, teardown.
-          trap 'wineserver -k >/dev/null 2>&1 || true' EXIT
+          export WINEPREFIX="$RUNNER_TEMP/d3d12-upscaler-wine"
           export WINEDEBUG=-all
-          timeout 120 xvfb-run -a sh -c 'wineboot -i && wineserver -w'
           make -C samples/gfx/d3d12_upscaler
-          xvfb-run -a make -C samples/gfx/d3d12_upscaler check
+          timeout 180 xvfb-run -a bash -c '
+            set -eu
+            . "$GITHUB_WORKSPACE/.github/workflows/scripts/wine-server.sh"
+            for pass in 1 2; do
+              make -C samples/gfx/d3d12_upscaler check
+            done
+          '
           make -C samples/gfx/d3d12_upscaler clean
 
   slang-rect:
@@ -608,6 +620,7 @@ jobs:
           # pointers (gl11_fakes.h).
           make clean CC=x86_64-w64-mingw32-gcc && make -j$(nproc) all CC=x86_64-w64-mingw32-gcc LDFLAGS=-static
           WINEDEBUG=-all timeout 300 wine ./gl2_pbo_readback_test.exe
+          CC=x86_64-w64-mingw32-gcc RUNNER=wine WINEDEBUG=-all python3 gles3_init_test.py
           make clean
 
       - name: Build and run d3d9 last_pass tests (mingw-w64, Wine)
@@ -900,12 +913,30 @@ jobs:
           # Vulkan through the symbol wrapper pointed at mocks, with
           # each allocation it makes failed in turn: a chain comes back
           # with every pass and every deferred-disposal queue, or not
-          # at all, and nothing is left behind.
+          # at all, and nothing is left behind. A replay of the last
+          # frame's final pass reads what that pass read, and a chain
+          # made to replay keeps one history image more.
           make clean SANITIZER=address,undefined && make -j$(nproc) all SANITIZER=address,undefined
           ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
              timeout 60 ./vulkan_chain_alloc_test
           make clean
           echo "[pass] vulkan_chain_alloc_test"
+
+      - name: Build and run gl3_shader_status_test and gl3_chain_alloc_test (ASan + UBSan)
+        shell: bash
+        working-directory: samples/gfx/gl3_shader_status
+        run: |
+          set -eu
+          # gfx/drivers_shader/shader_gl3.c with GL through the glsym
+          # table pointed at mocks: shader status checks, the chain's
+          # allocations failed in turn, and a replay of the last frame's
+          # final pass reading the textures, at the generations, that
+          # pass read, the history keeping a spare.
+          make clean SANITIZER=address,undefined && make -j$(nproc) all SANITIZER=address,undefined
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+             timeout 60 make check SANITIZER=address,undefined
+          make clean
+          echo "[pass] gl3_shader_status_test, gl3_chain_alloc_test"
 
       - name: Build and run vulkan_texture_size_test (ASan)
         shell: bash
@@ -933,6 +964,32 @@ jobs:
           test -x vulkan_texture_size_test
           timeout 60 ./vulkan_texture_size_test
           echo "[pass] vulkan_texture_size_test"
+
+      - name: Build and run vulkan_views_target_test
+        shell: bash
+        working-directory: samples/gfx/vulkan_views_target
+        run: |
+          set -eu
+          # gfx/drivers/vulkan.c's retained view targets and headset
+          # draw, copied out of the driver, against a mocked device: a
+          # failed allocation is not retried at the same size, a resize
+          # waits while both retired slots are full, and each headset
+          # screen is drawn straight into the runtime's image, a repeat
+          # ending no chain frame.
+          make clean && timeout 60 make check
+          echo "[pass] vulkan_views_target_test"
+
+      - name: Build and run gl3_xr_draw_test
+        shell: bash
+        working-directory: samples/gfx/gl3_xr_draw
+        run: |
+          set -eu
+          # gfx/drivers/gl3.c's headset draw, copied out of the driver,
+          # with GL stubbed: each screen straight into the runtime's
+          # texture, and a screen moved or resized while paused drawn
+          # again without ending a chain frame.
+          make clean && timeout 60 make check
+          echo "[pass] gl3_xr_draw_test"
 
       - name: GLES persistent loan pixel oracle (Mesa EGL)
         shell: bash
@@ -1291,13 +1348,13 @@ jobs:
           echo "[pass] gfx_widgets_sanitize_test (TSan)"
       - name: Build and run widget snapshot ownership test
         shell: bash
-        working-directory: tests-other
+        working-directory: samples/gfx/widget_snapshot_ownership
         run: |
           set -eu
-          make -f Makefile.widget_snapshot clean
-          make -f Makefile.widget_snapshot
+          make clean
+          make
           timeout 60 ./widget_snapshot_ownership_test
-          make -f Makefile.widget_snapshot clean
+          make clean
 
       - name: Build and run gfx_widgets_task_bar_stack_test (ASan + UBSan, TSan)
         shell: bash
@@ -1603,6 +1660,9 @@ jobs:
              ninja -C /tmp/sdl3-build > /tmp/sdl3-build.log
              sudo ninja -C /tmp/sdl3-build install > /tmp/sdl3-install.log
           fi
+          # A 59.94 mode beside the desktop's 60, which rounds alike
+          xrandr --newmode "1280x720_59.94" 74.176 1280 1390 1430 1650 720 725 730 750 +hsync +vsync
+          xrandr --addmode DUMMY0 1280x720_59.94
           (cd samples/gfx/display_servers_sdl3_live \
              && PKG_CONFIG_PATH=/opt/sdl3/lib/pkgconfig make clean all SANITIZER=address,undefined \
              && LD_LIBRARY_PATH=/opt/sdl3/lib \
@@ -1907,6 +1967,15 @@ jobs:
           # readback to be right, and a core that ignores what
           # lock_context tells it to be caught.
           REQUIRE_D3D11=1 samples/gfx/d3d11_hw_interface_v2/run.sh
+
+      - name: libretro_d3d11.h version 2, turns on the context (mingw + Wine)
+        shell: bash
+        run: |
+          set -o pipefail
+          # A core that locks and unlocks the context in a tight loop
+          # gives way to a frontend waiting for it, parked on an event
+          # rather than spinning; a core that does not must be caught.
+          samples/gfx/d3d11_turns/run.sh
 
       - name: libretro_d3d12.h version 2, the contract run (mingw + Wine + vkd3d, headless)
         shell: bash
@@ -2348,6 +2417,21 @@ jobs:
              timeout 60 ./integer_scale_axis_test
           make clean
 
+      - name: Build and run set_rotation_deferred_test (ASan + UBSan)
+        shell: bash
+        working-directory: samples/gfx/set_rotation_deferred
+        run: |
+          set -eu
+          # video_driver_set_rotation(), pulled out of gfx/video_driver.c
+          # by extract_set_rotation.awk. SET_ROTATION from retro_load_game
+          # arrives before the driver instance exists and must still
+          # report success (issue #19957), without touching the instance.
+          make clean SANITIZER=address,undefined && make -j$(nproc) all SANITIZER=address,undefined
+          test -x set_rotation_deferred_test
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 \
+             timeout 60 ./set_rotation_deferred_test
+          make clean
+
       - name: Build and run coord_array_test (ASan + UBSan)
         shell: bash
         working-directory: samples/gfx/coord_array
@@ -2631,6 +2715,30 @@ jobs:
 
       - name: Vulkan synchronous readback slot
         run: python3 samples/gfx/vulkan_readback_slot/run.py
+
+      - name: Capture bounds, conversion failures and list allocation rollback
+        shell: bash
+        run: |
+          set -eu
+          for sample in samples/gfx/video_frame_failure libretro-common/samples/lists/file_list_oom libretro-common/samples/gfx/scaler_point libretro-common/samples/gfx/image_scale_transfer samples/tasks/translation_reply; do
+            make -C "$sample" clean
+            make -C "$sample" check SANITIZER=address,undefined
+            make -C "$sample" clean
+            make -C "$sample" check CC=x86_64-w64-mingw32-gcc EXE=.exe RUNNER=wine
+            make -C "$sample" clean
+          done
+          make -C samples/tasks/translation_reply check RPNG=0 SANITIZER=address,undefined
+          make -C samples/tasks/translation_reply clean
+          make -C samples/tasks/translation_reply check RPNG=0 CC=x86_64-w64-mingw32-gcc EXE=.exe RUNNER=wine
+          make -C samples/tasks/translation_reply clean
+          python3 samples/gfx/vulkan_capture_guard/run.py
+          CC=x86_64-w64-mingw32-gcc RUNNER=wine WINEDEBUG=-all python3 samples/gfx/vulkan_capture_guard/run.py
+          python3 samples/gfx/video_frame_failure/translation.py
+          CC=x86_64-w64-mingw32-gcc RUNNER=wine WINEDEBUG=-all python3 samples/gfx/video_frame_failure/translation.py
+          SANITIZER=address,undefined python3 samples/gfx/video_frame_failure/screenshot.py
+          CC=x86_64-w64-mingw32-gcc RUNNER=wine WINEDEBUG=-all python3 samples/gfx/video_frame_failure/screenshot.py
+          python3 samples/menu/entry_alloc/run.py
+          CC=x86_64-w64-mingw32-gcc RUNNER=wine WINEDEBUG=-all python3 samples/menu/entry_alloc/run.py
 
       - name: D3D11 resized readback destination guard
         run: python3 samples/gfx/d3d11_readback_resize/run.py

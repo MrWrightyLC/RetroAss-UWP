@@ -3,7 +3,12 @@
  * core's frontend clears the mark. A boot that still finds the mark on
  * the configured core passes over it for another core; with no other
  * core left, it launches nothing and drops both entries so the boot
- * after looks again. */
+ * after looks again.
+ *
+ * The frontend's side, config_save_file_salamander() and
+ * config_clear_salamander_pending(), is taken out of configuration.c
+ * at build time: leaving for another core marks it the same way, and a
+ * plain quit or "Save Configuration" does not. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +29,7 @@
 #include "../../../frontend/frontend_driver.h"
 #include "../../../defaults.h"
 #include "../../../file_path_special.h"
+#include "../../../paths.h"
 
 int salamander_main(int argc, char *argv[]);
 
@@ -75,6 +81,36 @@ bool frontend_driver_get_salamander_basename(char *s, size_t len)
    return true;
 }
 
+/* The frontend's state as config_save_file_salamander() reads it. */
+static char               running_core[PATH_MAX_LENGTH];
+static enum frontend_fork fork_mode = FRONTEND_FORK_NONE;
+
+const char *path_get(enum rarch_path_type type)
+{
+   return type == RARCH_PATH_CORE ? running_core : "";
+}
+
+enum frontend_fork frontend_driver_get_fork(void)
+{
+   return fork_mode;
+}
+
+#define RARCH_LOG(...) ((void)0)
+#define RARCH_ERR(...) ((void)0)
+#include "salamander_config.h"
+#undef RARCH_LOG
+#undef RARCH_ERR
+
+/* A running frontend saving the salamander config: on its way out for
+ * another core (fork) or otherwise. */
+static void frontend_saves(const char *core, enum frontend_fork mode)
+{
+   fill_pathname_join(running_core, cores, core, sizeof(running_core));
+   fork_mode = mode;
+   config_save_file_salamander();
+   fork_mode = FRONTEND_FORK_NONE;
+}
+
 static void touch(const char *name)
 {
    char path[PATH_MAX_LENGTH];
@@ -111,15 +147,9 @@ static bool cfg_get(const char *key, char *out, size_t len)
    return ok;
 }
 
-/* What config_clear_salamander_pending() does once the core is up. */
 static void frontend_came_up(void)
 {
-   config_file_t *c = config_file_new_from_path_to_string(cfg);
-   if (!c)
-      return;
-   config_unset(c, SALAMANDER_CONFIG_PENDING_KEY);
-   config_file_write(c, cfg, false);
-   config_file_free(c);
+   config_clear_salamander_pending();
 }
 
 static const char *base(const char *path)
@@ -129,7 +159,8 @@ static const char *base(const char *path)
 
 int main(void)
 {
-   char v[PATH_MAX_LENGTH];
+   static char v[PATH_MAX_LENGTH];
+   const char *first, *second;
 
    config_file_set_io_default(config_file_io_filestream());
 
@@ -144,36 +175,62 @@ int main(void)
 
    /* No config: the first core, marked pending. */
    boot();
-   CHECK(string_is_equal(base(launched), "a_libretro.rpx"));
+   CHECK(string_is_equal(base(launched), "a_libretro.rpx")
+         || string_is_equal(base(launched), "b_libretro.rpx"));
+   first = string_is_equal(base(launched), "a_libretro.rpx")
+      ? "a_libretro.rpx" : "b_libretro.rpx";
+   second = string_is_equal(first, "a_libretro.rpx")
+      ? "b_libretro.rpx" : "a_libretro.rpx";
    CHECK(cfg_get("libretro_path", v, sizeof(v))
-         && string_is_equal(base(v), "a_libretro.rpx"));
+         && string_is_equal(base(v), first));
    CHECK(cfg_get(SALAMANDER_CONFIG_PENDING_KEY, v, sizeof(v))
-         && string_is_equal(base(v), "a_libretro.rpx"));
+         && string_is_equal(base(v), first));
 
-   /* a came up: it is launched again, and marked again. */
+   /* The selected core came up: launch and mark it again. */
    frontend_came_up();
    CHECK(!cfg_get(SALAMANDER_CONFIG_PENDING_KEY, v, sizeof(v)));
    boot();
-   CHECK(string_is_equal(base(launched), "a_libretro.rpx"));
+   CHECK(string_is_equal(base(launched), first));
 
-   /* a never came up this time: the next boot passes it over. */
+   /* The selected core did not start: try the other one. */
    boot();
-   CHECK(string_is_equal(base(launched), "b_libretro.rpx"));
+   CHECK(string_is_equal(base(launched), second));
    CHECK(cfg_get("libretro_path", v, sizeof(v))
-         && string_is_equal(base(v), "b_libretro.rpx"));
+         && string_is_equal(base(v), second));
    CHECK(cfg_get(SALAMANDER_CONFIG_PENDING_KEY, v, sizeof(v))
-         && string_is_equal(base(v), "b_libretro.rpx"));
+         && string_is_equal(base(v), second));
 
-   /* b is the only core left and never came up: nothing is launched,
-    * both entries go, and the boot after starts b again. */
-   unlink_core("a_libretro.rpx");
+   /* The remaining core did not start: clear both entries, then retry. */
+   unlink_core(first);
    boot();
    CHECK(launched[0] == '\0');
    CHECK(!cfg_get("libretro_path", v, sizeof(v)));
    CHECK(!cfg_get(SALAMANDER_CONFIG_PENDING_KEY, v, sizeof(v)));
    boot();
+   CHECK(string_is_equal(base(launched), second));
+
+   /* A running frontend that switches to a core marks it: when that
+    * core never comes up, the first boot after passes it over. */
+   touch("a_libretro.rpx");
+   touch("b_libretro.rpx");
+   frontend_came_up();
+   frontend_saves("a_libretro.rpx", FRONTEND_FORK_CORE_WITH_ARGS);
+   CHECK(cfg_get("libretro_path", v, sizeof(v))
+         && string_is_equal(base(v), "a_libretro.rpx"));
+   CHECK(cfg_get(SALAMANDER_CONFIG_PENDING_KEY, v, sizeof(v))
+         && string_is_equal(base(v), "a_libretro.rpx"));
+   boot();
    CHECK(string_is_equal(base(launched), "b_libretro.rpx"));
 
+   /* A plain quit or "Save Configuration" leaves no mark: the running
+    * core is up, and the next boot starts it. */
+   frontend_came_up();
+   frontend_saves("a_libretro.rpx", FRONTEND_FORK_NONE);
+   CHECK(!cfg_get(SALAMANDER_CONFIG_PENDING_KEY, v, sizeof(v)));
+   boot();
+   CHECK(string_is_equal(base(launched), "a_libretro.rpx"));
+
+   unlink_core("a_libretro.rpx");
    unlink_core("b_libretro.rpx");
    unlink_core("retroarch.rpx");
    remove(cfg);
@@ -185,6 +242,6 @@ int main(void)
       fprintf(stderr, "%d failure(s)\n", failures);
       return 1;
    }
-   printf("salamander_pending: ok\n");
+   printf("salamander_pending: ok (first %s)\n", first);
    return 0;
 }

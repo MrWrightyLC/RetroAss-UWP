@@ -21,9 +21,14 @@ concurrency:
 
 jobs:
   samples:
-    name: Build and run libretro-common/samples
+    name: Build and run libretro-common/samples (${{ matrix.group }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [codecs, formats, core]
     env:
+      SAMPLE_GROUP: ${{ matrix.group }}
       APT_PKGS: build-essential zlib1g-dev clang ffmpeg ccache
     timeout-minutes: 15
 
@@ -60,8 +65,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ github.workflow }}-${{ github.job }}-${{ github.sha }}
+          key: ccache-${{ github.workflow }}-${{ github.job }}-${{ matrix.group }}-${{ github.sha }}
           restore-keys: |
+            ccache-${{ github.workflow }}-${{ github.job }}-${{ matrix.group }}-
             ccache-${{ github.workflow }}-${{ github.job }}-
 
       - name: Enable ccache
@@ -96,19 +102,42 @@ jobs:
           # self-contained test and exits 0 on success / non-zero on
           # failure.  These are built AND executed.
           declare -a RUN_TARGETS=(
+            flv_mux_test
+            rtmp_chunk_test
+            rtmp_handshake_test
+            rtmp_receive_test
+            rtmp_command_test
+            rtmp_reply_test
+            rtmp_publish_test
+            rtmp_control_test
+            rtmp_session_test
+            rtmp_socket_test
             rslc_test
+            s16_to_float_test
+            float_to_s16_test
             float_to_s32_test
             compat_fnmatch_test
             snprintf
             unbase64_test
             crc32_test
+            # encoding_crc32.c through an assembler without VPCLMULQDQ,
+            # and beside encoding_rzstd.c under an unguarded <cpuid.h>.
+            crc32_gas_test
+            xxhash_test
+            rzstd_raw_block_test
+            rbzip2_test
             rinflate_window_test
             rdeflate_hash_test
             emscripten_mmap_test
             archive_zip_test
             archive_zstd_test
+            archive_zst_test
+            archive_bz2_test
+            archive_zip_methods_test
+            archive_zip64_test
             archive_rar_test
             archive_stream_test
+            archive_7z_test
             config_file_test
             path_resolve_realpath_test
             fill_pathname_test
@@ -130,10 +159,14 @@ jobs:
             rh264_lossless_test_volatile
             # The hardware path's sequencing against a checking backend.
             rh264_hw_test
+            # Savestates: saved mid-stream, loaded into a new decoder.
+            rh264_state_test
             # rmp3's frame-at-a-time API against its pull API.
             rmp3_frame_test
             # raac_last_size over units followed by more.
             raac_size_test
+            # raac's savestates: saved between units, loaded into a new decoder.
+            raac_state_test
             rh265_lossless_test
             rh265_lossless_test_nothreads
             rh265_lossless_test_volatile
@@ -141,6 +174,10 @@ jobs:
             rh265_weight_test
             r7z_lzma_props_test
             r7z_archive_detach_test
+            r7z_bcj2_test
+            r7z_stored_test
+            r7z_methods_test
+            r7z_stream_test
             rzip_archive_test
             # The RAR reader on real archives (LZ and PPMd blocks,
             # filters, Unicode names) and on mangled copies of them.
@@ -150,7 +187,11 @@ jobs:
             vfs_read_overflow_test
             vfs_mapped_ptr_test
             vfs_prefetch_test
+            vfs_readahead_test
+            vfs_prefetch_offthread_test
+            vfs_view_test
             vfs_prefetch_retarget_test
+            vfs_prefetch_view_test
             vfs_large_file_test
             vfs_seek_contract_test
             vfs_bulk_read_test
@@ -158,6 +199,7 @@ jobs:
             vfs_hybrid_test
             filestream_rbuf_fault_test
             vfs_rename_replace_test
+            vfs_close_result_test
             cdrom_cuesheet_overflow_test
             rdvd_h262_test
             rdvd_lpcm_test
@@ -173,11 +215,16 @@ jobs:
             cdfs_pure_api_test
             cdfs_io_error_test
             chd_meta_overflow_test
+            chd_stream_threads_test
+            chd_stream_ahead_test
+            rvz_test
+            filestream_printf_test
             strlcpy_append_test
             http_parse_test
             rjson_test
             rm3u_test
             rmp4_fragment_test
+            rmp4_language_test
             rav1_test
             rav1_picture_test
             rav1_reference_test
@@ -200,10 +247,15 @@ jobs:
             rbmp_test
             rbmp_encode_test
             # Every 16-bit input through each pixconv converter, with
-            # SSE2, with MMX only, and with no SIMD at all.
+            # SSE2, with MMX only, and with no SIMD at all; the wide
+            # build also runs each AVX2 / AVX-512 tier the runner has.
             pixconv_test
             pixconv_test_nosimd
             pixconv_test_scalar
+            pixconv_test_wide
+            scaler_point_test
+            image_scale_transfer_test
+            file_list_oom_test
             rpng_chunk_overflow_test
             rpng_roundtrip_test
             rpng_decode_corpus_test
@@ -232,6 +284,9 @@ jobs:
             # Parallel tasks on the extra workers, beside the one
             # worker plain tasks keep to.
             task_queue_parallel_test
+            # Which tasks run at once, and pushes from several
+            # threads with some stopped half way into the ring.
+            task_queue_overlap_test
             # The worker below the main thread as Horizon schedules
             # them; the lanes need SCHED_FIFO and skip without root.
             task_queue_fifo_prio_test
@@ -255,6 +310,10 @@ jobs:
             # The PS2 EE backend, built off-target against a stub
             # <kernel.h>: the PS2 CI lane compiles it, this runs it.
             retro_atomic_ps2_backend_test
+            # The Wii U backend, built off-target against stand-in
+            # coreinit OS*Atomic: each read-modify-write is one coreinit
+            # call, loads, stores and fences none.
+            retro_atomic_wiiu_backend_test
             retro_spsc_test
             mpsc_stack_test
             # A frame handoff where neither side waits: no read sees a
@@ -322,9 +381,11 @@ jobs:
             # metadata, retries and frame leases, and WebM dispatch
             # into it.
             rmp4_vp9_config_test
+            rmp4_vp9_hw_stream_test
             rvp9_config_test
             rvp9_reference_test
             rvp9_hw_session_test
+            rwebm_language_test
             rwebm_hw_stream_test
             # The NGX and NVAPI loaders against a stand-in NGX core
             # library on LD_LIBRARY_PATH; the Windows discovery runs
@@ -346,6 +407,9 @@ jobs:
           # self-contained regression tests came to be compiled every
           # run and never executed.
           declare -a NORUN_TARGETS=(
+            # Fixture-driven checks run in Linux-samples-record.yml.
+            flv_remux_test
+            rtmp_socket_native_test
             # CLI tools that print usage and exit non-zero without
             # arguments; they have no self-test mode.
             rzip
@@ -420,6 +484,14 @@ jobs:
 
           for d in "${MKDIRS[@]}"; do
             rel=${d#./}
+            case "$rel" in
+              formats/av1|formats/h264|formats/h265|formats/vp9) group=codecs ;;
+              formats/*) group=formats ;;
+              *) group=core ;;
+            esac
+            if [[ "$group" != "$SAMPLE_GROUP" ]]; then
+              continue
+            fi
             printf '========================================\n'
             printf '[%s] %s\n' "$(is_in "$rel" "${SKIP_DIRS[@]}" && echo skip || echo build)" "$rel"
             printf '========================================\n'
@@ -430,7 +502,7 @@ jobs:
             fi
 
             # Build
-            if ! ( cd "$d" && make clean all $MAKE_ARGS ); then
+            if ! ( cd "$d" && make clean && timeout 300 make -j2 all $MAKE_ARGS ); then
               printf '\n::error title=Build failed::%s failed to build\n' "$rel"
               fails=$((fails+1))
               continue
@@ -502,6 +574,7 @@ jobs:
           fi
 
       - name: Parse a generated DVD VOB with the native readers
+        if: matrix.group == 'formats'
         shell: bash
         working-directory: libretro-common/samples/formats/dvd
         run: |
@@ -526,6 +599,7 @@ jobs:
           done
 
       - name: Reconstruct progressive H262 I pictures against a reference
+        if: matrix.group == 'formats'
         shell: bash
         working-directory: libretro-common/samples/formats/dvd
         run: |
@@ -543,6 +617,7 @@ jobs:
           ./rdvd_h262_test "$fixture" "$reference"
 
       - name: Compile-test retro_atomic.h from a C++11 TU
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common
         run: |
@@ -657,6 +732,7 @@ jobs:
           rm -rf "$tmpdir"
 
       - name: Run retro_atomic_test under Clang + ThreadSanitizer
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/atomic/retro_atomic_test
         run: |
@@ -678,6 +754,7 @@ jobs:
           TSAN_OPTIONS=halt_on_error=1 ./retro_atomic_test
 
       - name: Run video_player_test under Clang + ThreadSanitizer, and threadless
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/formats/video_player
         run: |
@@ -700,6 +777,7 @@ jobs:
           done
 
       - name: Run rtime_localtime_test under Clang + ThreadSanitizer
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/time/rtime_localtime_test
         run: |
@@ -715,6 +793,7 @@ jobs:
           TSAN_OPTIONS=halt_on_error=1 ./rtime_localtime_test
 
       - name: Run retro_triple_buffer_test under Clang + ThreadSanitizer
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/queues/retro_triple_buffer_test
         run: |
@@ -730,6 +809,7 @@ jobs:
           TSAN_OPTIONS=halt_on_error=1 ./retro_triple_buffer_test
 
       - name: Run audio_mixer_voice_threads_test under Clang + ThreadSanitizer
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/audio/audio_mixer_voice_threads
         run: |
@@ -745,6 +825,7 @@ jobs:
           TSAN_OPTIONS=halt_on_error=1 ./audio_mixer_voice_threads_test
 
       - name: Run mpsc_stack_test under Clang + ThreadSanitizer
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/queues/mpsc_stack_test
         run: |
@@ -766,6 +847,7 @@ jobs:
           TSAN_OPTIONS=halt_on_error=1 ./mpsc_stack_test
 
       - name: Run retro_spsc_test on the POSIX shm mirror
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/queues/retro_spsc_test
         run: |
@@ -778,6 +860,7 @@ jobs:
           ./retro_spsc_test
 
       - name: Run retro_spsc_test under Clang + ThreadSanitizer
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/queues/retro_spsc_test
         run: |
@@ -803,6 +886,7 @@ jobs:
           TSAN_OPTIONS=halt_on_error=1 ./retro_spsc_test
 
       - name: Run retro_eventcount_test under Clang + ThreadSanitizer
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/rthreads/retro_eventcount_test
         run: |
@@ -829,6 +913,7 @@ jobs:
           CC=clang make check SANITIZER=thread
 
       - name: Run rzip_parallel_test under Clang + ThreadSanitizer
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/streams/rzip
         run: |
@@ -849,6 +934,7 @@ jobs:
           TSAN_OPTIONS=halt_on_error=1 ./rzip_parallel_test
 
       - name: Run crc32_test under Clang + ThreadSanitizer
+        if: matrix.group == 'core'
         shell: bash
         working-directory: libretro-common/samples/encodings/crc32
         run: |
@@ -869,6 +955,7 @@ jobs:
           TSAN_OPTIONS=halt_on_error=1 ./crc32_test
 
       - name: Prefix refill boundaries and sliding-window I/O
+        if: matrix.group == 'formats'
         run: |
           make -B -C libretro-common/samples/formats/data_transfer data_transfer_prefix_test data_transfer_window_test COUNT_IO=1 SAMPLE_OBJDIR=obj-inert-strict CFLAGS='-Wall -pedantic -std=gnu99 -O2 -g1 -DDT_STRICT -DDT_COUNT_IO -DHAVE_MMAP -D_GNU_SOURCE -I../../../include'
           cd libretro-common/samples/formats/data_transfer
@@ -887,7 +974,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ github.workflow }}-${{ github.job }}-${{ github.sha }}
+          key: ccache-${{ github.workflow }}-${{ github.job }}-${{ matrix.group }}-${{ github.sha }}
 
   # memmap.h picks between libretro-common's mman shim and the
   # platform's own <sys/mman.h>, and Emscripten is the target where
@@ -1246,6 +1333,27 @@ jobs:
             t=$(sed -nE 's/^TARGET[[:space:]]*:?=[[:space:]]*//p' "$d/Makefile")
             ( cd "$d" && make clean && make CC=x86_64-w64-mingw32-gcc all && timeout 120 wine "./$t.exe" && make clean )
           done
+
+      - name: Build and run the mapped read-ahead test under Wine
+        shell: bash
+        working-directory: libretro-common/samples/file/vfs
+        env:
+          WINEDEBUG: -all
+        run: |
+          set -eu
+          set -o pipefail
+          . "$GITHUB_WORKSPACE/.github/workflows/scripts/wine-server.sh"
+          make clean MMAP=0
+          make CC=x86_64-w64-mingw32-gcc MMAP=0 vfs_readahead_test vfs_prefetch_offthread_test vfs_close_result_test
+          timeout 120 wine ./vfs_readahead_test.exe
+          RETRO_VFS_PREFETCH=touch timeout 120 wine ./vfs_readahead_test.exe
+          RETRO_VFS_PREFETCH=none timeout 120 wine ./vfs_readahead_test.exe
+          # The prefetch never runs on, or stalls, the reader.
+          timeout 120 wine ./vfs_prefetch_offthread_test.exe
+          # A close() that reports the descriptor number on success, as
+          # ps2sdk's does, is not a failure on the descriptor path.
+          timeout 120 wine ./vfs_close_result_test.exe
+          make clean MMAP=0
 
       - name: Build and run native DVD packets under Wine
         shell: bash

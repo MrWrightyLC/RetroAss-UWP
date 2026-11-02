@@ -78,7 +78,7 @@ HAVE_UPDATE_CORES=yes      # Downloading cores with the online updater
 HAVE_UPDATE_CORE_INFO=yes  # Downloading core info files with the online updater
 HAVE_UPDATE_ASSETS=yes     # Downloading assets with the online updater
 HAVE_CHEEVOS=yes           # Retro Achievements
-HAVE_CHEEVOS_RVZ=yes       # Retro Achievements hashing for Wii/GC RVZ files, depends on Zstd
+HAVE_CHEEVOS_RVZ=yes       # Retro Achievements hashing for Wii/GC RVZ files, depends on RZSTD
 HAVE_LUA=no                # Lua support (for Retro Achievements)
 HAVE_DISCORD=yes           # Discord Integration
 C89_DISCORD=no
@@ -213,7 +213,6 @@ HAVE_WGI=auto              # Windows.Gaming.Input for Xbox pads on the HID drive
 HAVE_LIBUSB=auto           # Libusb HID support
 C89_LIBUSB=no
 HAVE_BLISSBOX=auto         # Blissbox support
-HAVE_LIBSHAKE=no           # libShake haptic feedback support
 HAVE_RPILED=auto           # RPI led support
 HAVE_TEST_DRIVERS=yes      # Test input driver
 
@@ -236,8 +235,7 @@ HAVE_MPV=no                # MPV support
 # System integration
 HAVE_DBUS=no               # dbus support
 HAVE_SYSTEMD=auto          # Systemd support
-HAVE_GAMEMODE=yes          # Feral GameMode support (Linux)
-C89_GAMEMODE=no
+HAVE_GAMEMODE=yes          # Game Mode support (Linux)
 
 # Image, audio and video codecs
 HAVE_FREETYPE=auto         # FreeType support
@@ -267,6 +265,7 @@ HAVE_ZLIB=no               # zlib support (uses the built-in DEFLATE codec when 
 HAVE_7ZIP=yes              # 7z archive support
 HAVE_RRAR=yes              # RAR archive support
 HAVE_RZSTD=yes             # Built-in Zstandard codec
+HAVE_RBZIP2=yes            # Built-in bzip2 decoder (.bz2, bzip2 zip members)
 HAVE_CHD=yes               # CHD disc image support
 HAVE_RCHD=yes              # Read CHD images with the built-in reader instead of libchdr
 CXX_CHD=no

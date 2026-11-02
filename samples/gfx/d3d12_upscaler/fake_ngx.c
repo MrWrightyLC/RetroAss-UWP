@@ -31,12 +31,13 @@ typedef struct param_slot
 typedef struct param { const void *const *vtable; param_slot_t slot[64]; unsigned n; } param_t;
 static const void *init_info;
 static const void *const param_vtable[17];
-static param_t params[4];
+static param_t params[16];
 static unsigned params_used;
 static param_t caps;
 static int inited;
 static unsigned features_made;
 static int handles[8];
+static int handle_feature[8];
 
 static fake_ngx_record_t rec;
 
@@ -127,7 +128,8 @@ static void *get_p(param_t *p, const char *n)
 }
 
 /* Quality: 0 MaxPerf 1/2, 1 Balanced 0.58, 2 MaxQuality 2/3,
- * 3 UltraPerformance 1/3, 5 DLAA 1; dynamic range 1/2 .. 1 of optimal
+ * 3 UltraPerformance 1/3, 5 DLAA 1; dynamic range from 1/2 of optimal
+ * to the output
  * (a quality the library has not got, 4 UltraQuality, answers 0) */
 static int CONV optimal_cb(param_t *p)
 {
@@ -173,6 +175,10 @@ EXPORT int CONV NVSDK_NGX_D3D12_Init_ProjectID(const char *project, int engine,
    caps.vtable = param_vtable;
    NVSDK_NGX_Parameter_SetI(&caps, "SuperSampling.Available", rec.unavailable ? 0 : 1);
    NVSDK_NGX_Parameter_SetI(&caps, "SuperSampling.NeedsUpdatedDriver", 0);
+   if (!rec.nr_missing)
+      NVSDK_NGX_Parameter_SetI(&caps, "DLSSNR.Available", 1);
+   if (rec.optiscaler)
+      NVSDK_NGX_Parameter_SetI(&caps, "OptiScaler", 1);
    {
       void *cb;
       int (CONV *fn)(param_t*) = optimal_cb;
@@ -197,7 +203,7 @@ EXPORT int CONV NVSDK_NGX_D3D12_GetCapabilityParameters(param_t **out)
 }
 EXPORT int CONV NVSDK_NGX_D3D12_AllocateParameters(param_t **out)
 {
-   if (params_used >= 4) return FAIL;
+   if (params_used >= 16) return FAIL;
    memset(&params[params_used], 0, sizeof(params[0]));
    params[params_used].vtable = param_vtable;
    *out = &params[params_used++];
@@ -211,11 +217,36 @@ EXPORT int CONV NVSDK_NGX_D3D12_GetFeatureRequirements(void *adapter, const void
 EXPORT int CONV NVSDK_NGX_D3D12_CreateFeature(void *cmd, int feature, param_t *p, int **out)
 {
    fake_ngx_create_t *c = &rec.create[rec.creates % FAKE_NGX_MAX];
-   if (!cmd || feature != 1 || !inited)
+   if (!cmd || (feature != 1 && feature != 18) || !inited)
       return FAIL | 5;
+   if (feature == 18 && rec.nr_missing)
+      return FAIL | 12;
    if (rec.create_fails)
       return FAIL | 11;
+   memset(c, 0, sizeof(*c));
    c->cmd        = cmd;
+   c->feature    = feature;
+   if (feature == 18)
+   {
+      if (!get_ui(p, "DLSSNR.Enabled"))
+         return FAIL | 5;
+      c->out_width    = get_ui(p, "DLSSNR.Width");
+      c->out_height   = get_ui(p, "DLSSNR.Height");
+      c->node_mask    = get_ui(p, "CreationNodeMask") | (get_ui(p, "VisibilityNodeMask") << 8);
+      c->nr_preset    = get_ui(p, "DLSSNR.Hint.Render.Preset");
+      c->nr_style     = get_ui(p, "DLSSNR.Style");
+      c->nr_auto_mask = get_ui(p, "DLSSNR.UseAutoMask");
+      c->nr_intensity = get_f(p, "DLSSNR.Intensity");
+      c->nr_structure = get_f(p, "DLSSNR.LocalStructureStrength");
+      c->nr_tone      = get_f(p, "DLSSNR.LocalToneStrength");
+      c->nr_skin      = get_f(p, "DLSSNR.SkinStructureStrength");
+      rec.creates++;
+      handle_feature[features_made % 8] = 18;
+      handles[features_made % 8] = (int)(features_made + 1);
+      *out = &handles[features_made % 8];
+      features_made++;
+      return OK;
+   }
    c->width      = get_ui(p, "Width");
    c->height     = get_ui(p, "Height");
    c->out_width  = get_ui(p, "OutWidth");
@@ -225,6 +256,7 @@ EXPORT int CONV NVSDK_NGX_D3D12_CreateFeature(void *cmd, int feature, param_t *p
    c->node_mask  = get_ui(p, "CreationNodeMask") | (get_ui(p, "VisibilityNodeMask") << 8);
    c->preset     = get_ui(p, "DLSS.Hint.Render.Preset.Quality");
    rec.creates++;
+   handle_feature[features_made % 8] = 1;
    handles[features_made % 8] = (int)(features_made + 1);
    *out = &handles[features_made % 8];
    features_made++;
@@ -287,14 +319,39 @@ EXPORT int CONV NVSDK_NGX_D3D12_EvaluateFeature(void *cmd, const int *h, param_t
       return FAIL | 4;
    if (rec.eval_fails)
       return FAIL | 2;
+   memset(e, 0, sizeof(*e));
    e->cmd            = cmd;
    e->feature        = *h;
+   if (handle_feature[(h - handles) & 7] == 18)
+   {
+      e->nr             = 1;
+      e->color          = get_p(p, "DLSSNR.Color");
+      e->output         = get_p(p, "DLSSNR.Output");
+      e->depth          = get_p(p, "DLSSNR.Depth");
+      e->motion_vectors = get_p(p, "DLSSNR.MVec");
+      e->mv_scale_x     = get_f(p, "DLSSNR.MVecScaleX");
+      e->mv_scale_y     = get_f(p, "DLSSNR.MVecScaleY");
+      e->reset          = (int)get_ui(p, "DLSSNR.Reset");
+      e->depth_inverted = (int)get_ui(p, "DLSSNR.DepthInverted");
+      e->subrect_w      = get_ui(p, "DLSSNR.ColorSubrectWidth");
+      e->subrect_h      = get_ui(p, "DLSSNR.ColorSubrectHeight");
+      e->depth_w        = get_ui(p, "DLSSNR.DepthSubrectWidth");
+      e->depth_h        = get_ui(p, "DLSSNR.DepthSubrectHeight");
+      e->mv_w           = get_ui(p, "DLSSNR.MVecSubrectWidth");
+      e->mv_h           = get_ui(p, "DLSSNR.MVecSubrectHeight");
+      rec.evals++;
+      /* the input's top-left into the output, as the pass would */
+      if (e->color && e->output)
+         copy_in((ID3D12GraphicsCommandList*)cmd, (ID3D12Resource*)e->color,
+               (ID3D12Resource*)e->output, e->subrect_w, e->subrect_h);
+      return OK;
+   }
    e->color          = get_p(p, "Color");
    e->output         = get_p(p, "Output");
    e->depth          = get_p(p, "Depth");
    e->motion_vectors = get_p(p, "MotionVectors");
    e->exposure       = get_p(p, "ExposureTexture");
-   e->transparency   = get_p(p, "TransparencyMask");
+   e->transparency   = get_p(p, "DLSS.Input.Bias.Current.Color.Mask");
    e->jitter_x       = get_f(p, "Jitter.Offset.X");
    e->jitter_y       = get_f(p, "Jitter.Offset.Y");
    e->mv_scale_x     = get_f(p, "MV.Scale.X");
@@ -303,6 +360,7 @@ EXPORT int CONV NVSDK_NGX_D3D12_EvaluateFeature(void *cmd, const int *h, param_t
    e->exposure_scale = get_f(p, "DLSS.Exposure.Scale");
    e->frame_time     = get_f(p, "FrameTimeDeltaInMsec");
    e->reset          = get_i(p, "Reset");
+   e->sharpness = get_f(p, "Sharpness");
    e->subrect_w      = get_ui(p, "DLSS.Render.Subrect.Dimensions.Width");
    e->subrect_h      = get_ui(p, "DLSS.Render.Subrect.Dimensions.Height");
    rec.evals++;

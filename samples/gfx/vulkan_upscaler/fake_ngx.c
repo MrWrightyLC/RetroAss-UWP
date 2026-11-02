@@ -31,15 +31,45 @@ typedef struct param_slot
 typedef struct param { const void *const *vtable; param_slot_t slot[64]; unsigned n; } param_t;
 static const void *init_info;
 static const void *const param_vtable[17];
-static param_t params[4];
+static param_t params[16];
 static unsigned params_used;
 static param_t caps;
 static int inited;
 static unsigned features_made;
 static int handles[8];
+static int handle_feature[8];
 
-static const char *inst_exts[]   = { "VK_KHR_get_physical_device_properties2" };
-static const char *device_exts[] = { "VK_KHR_maintenance1", "VK_NVX_binary_import" };
+/* VkExtensionProperties; filled at the first query */
+typedef struct ext_props { char name[256]; uint32_t spec; } ext_props_t;
+static ext_props_t inst_exts[1];
+static ext_props_t device_exts[2];
+
+/* The library's own GPU work on the output, through the transfer stage
+ * as a library may: a clear of the Vulkan output it was handed, with
+ * the device's entry points from Init's vkGetDeviceProcAddr */
+typedef void *(CONV *gdpa_t)(void *device, const char *name);
+typedef void (CONV *clear_color_t)(void *cmd, void *image, int layout,
+      const void *color, uint32_t count, const void *ranges);
+static clear_color_t clear_color_image;
+static void clear_output(void *cmd, const void *res)
+{
+   const struct
+   {
+      void *view; void *image;
+      uint32_t aspect, base_mip, levels, base_layer, layers;
+   } *r = res;
+   uint32_t range[5];
+   float color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+   if (!clear_color_image || !res || !r->image)
+      return;
+   range[0] = r->aspect;
+   range[1] = r->base_mip;
+   range[2] = r->levels;
+   range[3] = r->base_layer;
+   range[4] = r->layers;
+   /* (VK_IMAGE_LAYOUT_GENERAL, where the output is for an evaluate) */
+   clear_color_image(cmd, r->image, 1, color, 1, range);
+}
 
 static fake_ngx_record_t rec;
 
@@ -130,7 +160,8 @@ static void *get_p(param_t *p, const char *n)
 }
 
 /* Quality: 0 MaxPerf 1/2, 1 Balanced 0.58, 2 MaxQuality 2/3,
- * 3 UltraPerformance 1/3, 5 DLAA 1; dynamic range 1/2 .. 1 of optimal
+ * 3 UltraPerformance 1/3, 5 DLAA 1; dynamic range from 1/2 of optimal
+ * to the output
  * (a quality the library has not got, 4 UltraQuality, answers 0) */
 static int CONV optimal_cb(param_t *p)
 {
@@ -160,22 +191,37 @@ static int CONV optimal_cb(param_t *p)
    return OK;
 }
 
-EXPORT int CONV NVSDK_NGX_VULKAN_RequiredExtensions(unsigned *ic, const char ***ie, unsigned *dc, const char ***de)
-{
-   *ic = 1; *ie = inst_exts; *dc = 2; *de = device_exts;
-   return OK;
-}
+/* OptiScaler's shape: no NVSDK_NGX_VULKAN_RequiredExtensions, only the
+ * feature requirement calls; the discovery info's feature id (its
+ * second int) is recorded */
 EXPORT int CONV NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements(const void *info, uint32_t *count, void **props)
 {
-   (void)info; *count = 0; *props = NULL; return OK;
+   rec.ext_feature_id = info ? ((const int*)info)[1] : -1;
+   rec.ext_calls++;
+   strcpy(inst_exts[0].name, "VK_KHR_get_physical_device_properties2");
+   *count = 1; *props = inst_exts; return OK;
 }
 EXPORT int CONV NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(void *inst, void *pd, const void *info, uint32_t *count, void **props)
 {
-   (void)inst; (void)pd; (void)info; *count = 0; *props = NULL; return OK;
+   (void)inst; (void)pd;
+   rec.ext_feature_id = info ? ((const int*)info)[1] : -1;
+   rec.ext_calls++;
+   if (rec.ext_feature_id == 18 && rec.nr_missing)
+   {
+      *count = 0;
+      return FAIL | 12;
+   }
+   strcpy(device_exts[0].name, "VK_KHR_maintenance1");
+   strcpy(device_exts[1].name, "VK_NVX_binary_import");
+   *count = 2; *props = device_exts; return OK;
 }
 EXPORT int CONV NVSDK_NGX_VULKAN_GetFeatureRequirements(void *inst, void *pd, const void *info, void *out)
 {
-   (void)inst; (void)pd; (void)info; memset(out, 0, 4 + 4 + 255); return OK;
+   (void)inst; (void)pd;
+   memset(out, 0, 4 + 4 + 255);
+   if (info && ((const int*)info)[1] == 18 && rec.nr_missing)
+      return FAIL | 12;
+   return OK;
 }
 EXPORT int CONV NVSDK_NGX_VULKAN_Init_ProjectID_Ext(const char *project, int engine,
       const char *engine_version, const wchar_t *data_path, void *inst, void *pd,
@@ -188,12 +234,23 @@ EXPORT int CONV NVSDK_NGX_VULKAN_Init_ProjectID_Ext(const char *project, int eng
       return FAIL;
    rec.init_calls++;
    rec.init_device   = dev;
+   clear_color_image = NULL;
+   if (gdpa != (void*)1)
+   {
+      gdpa_t get;
+      memcpy(&get, &gdpa, sizeof(get));
+      clear_color_image = (clear_color_t)get(dev, "vkCmdClearColorImage");
+   }
    rec.init_path0    = (paths[0] && paths[0][0]) ? paths[0][0][0] : 0;
    init_info         = common_info;
    memset(&caps, 0, sizeof(caps));
    caps.vtable = param_vtable;
    NVSDK_NGX_Parameter_SetI(&caps, "SuperSampling.Available", rec.unavailable ? 0 : 1);
    NVSDK_NGX_Parameter_SetI(&caps, "SuperSampling.NeedsUpdatedDriver", 0);
+   if (!rec.nr_missing)
+      NVSDK_NGX_Parameter_SetI(&caps, "DLSSNR.Available", 1);
+   if (rec.optiscaler)
+      NVSDK_NGX_Parameter_SetI(&caps, "OptiScaler", 1);
    {
       void *cb;
       int (CONV *fn)(param_t*) = optimal_cb;
@@ -226,7 +283,7 @@ EXPORT int CONV NVSDK_NGX_VULKAN_GetCapabilityParameters(param_t **out)
 }
 EXPORT int CONV NVSDK_NGX_VULKAN_AllocateParameters(param_t **out)
 {
-   if (params_used >= 4) return FAIL;
+   if (params_used >= 16) return FAIL;
    memset(&params[params_used], 0, sizeof(params[0]));
    params[params_used].vtable = param_vtable;
    *out = &params[params_used++];
@@ -236,10 +293,35 @@ EXPORT int CONV NVSDK_NGX_VULKAN_DestroyParameters(param_t *p) { (void)p; rec.pa
 EXPORT int CONV NVSDK_NGX_VULKAN_CreateFeature1(void *dev, void *cmd, int feature, param_t *p, int **out)
 {
    fake_ngx_create_t *c = &rec.create[rec.creates % FAKE_NGX_MAX];
-   if (!dev || !cmd || feature != 1 || !inited)
+   if (!dev || !cmd || (feature != 1 && feature != 18) || !inited)
       return FAIL | 5;
+   if (feature == 18 && rec.nr_missing)
+      return FAIL | 12;
    if (rec.create_fails)
       return FAIL | 11;
+   memset(c, 0, sizeof(*c));
+   c->feature    = feature;
+   if (feature == 18)
+   {
+      c->out_width    = get_ui(p, "DLSSNR.Width");
+      c->out_height   = get_ui(p, "DLSSNR.Height");
+      c->node_mask    = get_ui(p, "CreationNodeMask") | (get_ui(p, "VisibilityNodeMask") << 8);
+      c->nr_preset    = get_ui(p, "DLSSNR.Hint.Render.Preset");
+      c->nr_style     = get_ui(p, "DLSSNR.Style");
+      c->nr_auto_mask = get_ui(p, "DLSSNR.UseAutoMask");
+      c->nr_intensity = get_f(p, "DLSSNR.Intensity");
+      c->nr_structure = get_f(p, "DLSSNR.LocalStructureStrength");
+      c->nr_tone      = get_f(p, "DLSSNR.LocalToneStrength");
+      c->nr_skin      = get_f(p, "DLSSNR.SkinStructureStrength");
+      if (!get_ui(p, "DLSSNR.Enabled"))
+         return FAIL | 5;
+      rec.creates++;
+      handle_feature[features_made % 8] = 18;
+      handles[features_made % 8] = (int)(features_made + 1);
+      *out = &handles[features_made % 8];
+      features_made++;
+      return OK;
+   }
    c->width      = get_ui(p, "Width");
    c->height     = get_ui(p, "Height");
    c->out_width  = get_ui(p, "OutWidth");
@@ -249,6 +331,7 @@ EXPORT int CONV NVSDK_NGX_VULKAN_CreateFeature1(void *dev, void *cmd, int featur
    c->node_mask  = get_ui(p, "CreationNodeMask") | (get_ui(p, "VisibilityNodeMask") << 8);
    c->preset     = get_ui(p, "DLSS.Hint.Render.Preset.Quality");
    rec.creates++;
+   handle_feature[features_made % 8] = 1;
    handles[features_made % 8] = (int)(features_made + 1);
    *out = &handles[features_made % 8];
    features_made++;
@@ -296,13 +379,35 @@ EXPORT int CONV NVSDK_NGX_VULKAN_EvaluateFeature(void *cmd, const int *h, param_
       return FAIL | 4;
    if (rec.eval_fails)
       return FAIL | 2;
+   memset(e, 0, sizeof(*e));
    e->feature    = *h;
+   if (handle_feature[(h - handles) & 7] == 18)
+   {
+      e->nr = 1;
+      copy_res(&e->color, get_p(p, "DLSSNR.Color"));
+      copy_res(&e->output, get_p(p, "DLSSNR.Output"));
+      copy_res(&e->depth, get_p(p, "DLSSNR.Depth"));
+      copy_res(&e->motion_vectors, get_p(p, "DLSSNR.MVec"));
+      e->mv_scale_x     = get_f(p, "DLSSNR.MVecScaleX");
+      e->mv_scale_y     = get_f(p, "DLSSNR.MVecScaleY");
+      e->reset          = (int)get_ui(p, "DLSSNR.Reset");
+      e->depth_inverted = (int)get_ui(p, "DLSSNR.DepthInverted");
+      e->subrect_w      = get_ui(p, "DLSSNR.ColorSubrectWidth");
+      e->subrect_h      = get_ui(p, "DLSSNR.ColorSubrectHeight");
+      e->depth_w        = get_ui(p, "DLSSNR.DepthSubrectWidth");
+      e->depth_h        = get_ui(p, "DLSSNR.DepthSubrectHeight");
+      e->mv_w           = get_ui(p, "DLSSNR.MVecSubrectWidth");
+      e->mv_h           = get_ui(p, "DLSSNR.MVecSubrectHeight");
+      rec.evals++;
+      return OK;
+   }
    copy_res(&e->color, get_p(p, "Color"));
    copy_res(&e->output, get_p(p, "Output"));
+   clear_output(cmd, get_p(p, "Output"));
    copy_res(&e->depth, get_p(p, "Depth"));
    copy_res(&e->motion_vectors, get_p(p, "MotionVectors"));
    copy_res(&e->exposure, get_p(p, "ExposureTexture"));
-   copy_res(&e->transparency, get_p(p, "TransparencyMask"));
+   copy_res(&e->transparency, get_p(p, "DLSS.Input.Bias.Current.Color.Mask"));
    e->jitter_x   = get_f(p, "Jitter.Offset.X");
    e->jitter_y   = get_f(p, "Jitter.Offset.Y");
    e->mv_scale_x = get_f(p, "MV.Scale.X");
@@ -311,6 +416,7 @@ EXPORT int CONV NVSDK_NGX_VULKAN_EvaluateFeature(void *cmd, const int *h, param_
    e->exposure_scale = get_f(p, "DLSS.Exposure.Scale");
    e->frame_time = get_f(p, "FrameTimeDeltaInMsec");
    e->reset      = get_i(p, "Reset");
+   e->sharpness = get_f(p, "Sharpness");
    e->subrect_w  = get_ui(p, "DLSS.Render.Subrect.Dimensions.Width");
    e->subrect_h  = get_ui(p, "DLSS.Render.Subrect.Dimensions.Height");
    rec.evals++;

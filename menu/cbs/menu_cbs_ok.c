@@ -81,12 +81,13 @@
 #include "../../tasks/task_file_transfer.h"
 #include "../../tasks/tasks_internal.h"
 #include "../../input/input_remapping.h"
+#include "../../input/common/input_ignore_devices.h"
 #include "../../paths.h"
 #include "../../playlist.h"
 #include "../../retroarch.h"
 #include "../../runloop.h"
 #include "../../verbosity.h"
-#include "../../lakka.h"
+#include "../../os/lakka/lakka.h"
 #ifdef HAVE_BLUETOOTH
 #include "../../bluetooth/bluetooth_driver.h"
 #endif
@@ -104,7 +105,7 @@
 #endif
 
 #ifdef __WINRT__
-#include "../../uwp/uwp_func.h"
+#include "../../os/uwp/uwp_func.h"
 #endif
 #if TARGET_OS_IPHONE
 #include "../../ui/drivers/cocoa/apple_platform.h"
@@ -112,11 +113,11 @@
 
 #if defined(ANDROID)
 #include "../../file_path_special.h"
-#include "../../play_feature_delivery/play_feature_delivery.h"
+#include "../../os/android/play_feature_delivery.h"
 #endif
 
 #if defined(HAVE_LIBNX)
-#include "../../switch_performance_profiles.h"
+#include "../../os/libnx/switch_performance_profiles.h"
 #endif
 
 #ifdef HAVE_MIST
@@ -392,6 +393,8 @@ static enum msg_hash_enums action_ok_dl_to_enum(unsigned lbl)
          return MENU_ENUM_LABEL_DEFERRED_VIDEO_HDR_SETTINGS_LIST;
       case ACTION_OK_DL_VIDEO_STEREO_SETTINGS_LIST:
          return MENU_ENUM_LABEL_DEFERRED_VIDEO_STEREO_SETTINGS_LIST;
+      case ACTION_OK_DL_VIDEO_DLSS_NR_SETTINGS_LIST:
+         return MENU_ENUM_LABEL_DEFERRED_VIDEO_DLSS_NR_SETTINGS_LIST;
       case ACTION_OK_DL_VIDEO_OUTPUT_SETTINGS_LIST:
          return MENU_ENUM_LABEL_DEFERRED_VIDEO_OUTPUT_SETTINGS_LIST;
       case ACTION_OK_DL_CRT_SWITCHRES_SETTINGS_LIST:
@@ -1346,18 +1349,9 @@ int generic_action_ok_displaylist_push(
          dl_type            = DISPLAYLIST_FILE_BROWSER_SCAN_DIR;
          break;
       case ACTION_OK_DL_MANUAL_SCAN_DIR_LIST:
-         if (*(manual_content_scan_get_scan_single_file_ptr()) == true)
-         {
-            filebrowser_set_type(FILEBROWSER_SCAN_FILE);
-            info.type          = FILE_TYPE_PLAIN;
-            dl_type            = DISPLAYLIST_FILE_BROWSER_SELECT_FILE;
-         }
-         else
-         {
-            filebrowser_set_type(FILEBROWSER_MANUAL_SCAN_DIR);
-            info.type          = FILE_TYPE_DIRECTORY;
-            dl_type            = DISPLAYLIST_FILE_BROWSER_SELECT_DIR;
-         }
+         filebrowser_set_type(FILEBROWSER_MANUAL_SCAN_DIR);
+         info.type          = FILE_TYPE_DIRECTORY;
+         dl_type            = DISPLAYLIST_FILE_BROWSER_SELECT_DIR;
          info.directory_ptr = idx;
          info_label         = label;
 
@@ -1816,6 +1810,7 @@ int generic_action_ok_displaylist_push(
       case ACTION_OK_DL_VIDEO_SETTINGS_LIST:
       case ACTION_OK_DL_VIDEO_HDR_SETTINGS_LIST:
       case ACTION_OK_DL_VIDEO_STEREO_SETTINGS_LIST:
+      case ACTION_OK_DL_VIDEO_DLSS_NR_SETTINGS_LIST:
       case ACTION_OK_DL_VIDEO_SYNCHRONIZATION_SETTINGS_LIST:
       case ACTION_OK_DL_VIDEO_FULLSCREEN_MODE_SETTINGS_LIST:
       case ACTION_OK_DL_VIDEO_WINDOWED_MODE_SETTINGS_LIST:
@@ -2007,6 +2002,7 @@ static const ok_dl_map_t ok_dl_map[] = {
    { MENU_ENUM_LABEL_VIDEO_SCALING_SETTINGS, ACTION_OK_DL_VIDEO_SCALING_SETTINGS_LIST },
    { MENU_ENUM_LABEL_VIDEO_HDR_SETTINGS, ACTION_OK_DL_VIDEO_HDR_SETTINGS_LIST },
    { MENU_ENUM_LABEL_VIDEO_STEREO_SETTINGS, ACTION_OK_DL_VIDEO_STEREO_SETTINGS_LIST },
+   { MENU_ENUM_LABEL_VIDEO_DLSS_NR_SETTINGS, ACTION_OK_DL_VIDEO_DLSS_NR_SETTINGS_LIST },
    { MENU_ENUM_LABEL_VIDEO_OUTPUT_SETTINGS, ACTION_OK_DL_VIDEO_OUTPUT_SETTINGS_LIST },
    { MENU_ENUM_LABEL_CRT_SWITCHRES_SETTINGS, ACTION_OK_DL_CRT_SWITCHRES_SETTINGS_LIST },
    { MENU_ENUM_LABEL_AUDIO_SETTINGS, ACTION_OK_DL_AUDIO_SETTINGS_LIST },
@@ -4529,60 +4525,89 @@ static int action_ok_path_scan_directory(const char *path,
 }
 #endif
 
+/* Also called by the Apple file pickers opened from Content Location. */
+void action_ok_manual_content_scan_set_dir(const char *content_dir)
+{
+#ifdef HAVE_COCOATOUCH
+   /* For iOS, set the path using realpath because the path name
+    * can start with /private and this ensures the path starts with it.
+    * This will allow the path to be properly substituted when
+    * fill_pathname_expand_special() is called. */
+   char tmp_dir[PATH_MAX_LENGTH];
+   char *real_dir = NULL;
+   fill_pathname_expand_special(tmp_dir, content_dir, sizeof(tmp_dir));
+   if ((real_dir = realpath(tmp_dir, NULL)))
+      content_dir = real_dir;
+#endif
+
+   /* 'Reset' file browser */
+   filebrowser_clear_type();
+
+   /* Update manual content scan settings */
+   manual_content_scan_set_menu_content_dir(content_dir);
+#ifdef HAVE_COCOATOUCH
+   free(real_dir);
+#endif
+
+   /* Return to 'manual content scan' menu */
+   menu_entries_flush_stack(MENU_ENUM_LABEL_DEFERRED_MANUAL_CONTENT_SCAN_LIST_STR, 0);
+}
+
+/* Whether Content Location's browser, or a folder entered from it,
+ * is the current menu. Back leaves the browser type set; a folder
+ * entered keeps the browser's label. */
+bool action_ok_manual_content_scan_dir_browsing(void)
+{
+   const char *menu_label = NULL;
+   if (filebrowser_get_type() != FILEBROWSER_MANUAL_SCAN_DIR)
+      return false;
+   menu_entries_get_last_stack(NULL, &menu_label, NULL, NULL, NULL);
+   return string_is_equal(menu_label,
+         MENU_ENUM_LABEL_MANUAL_CONTENT_SCAN_DIR_STR);
+}
+
+#ifdef HAVE_LIBRETRODB
+/* Scan File: OK on a file scans it, as the Scan action does. */
+static int action_ok_path_scan_file(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   return action_scan_file(path, label, type, idx);
+}
+#endif
+
 static int action_ok_path_manual_scan_directory(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
 #if TARGET_OS_IPHONE
    char dir_path[DIR_MAX_LENGTH];
 #endif
-   char content_dir[DIR_MAX_LENGTH];
-   unsigned flush_type    = 0;
+   char content_dir[PATH_MAX_LENGTH];
    const char *menu_path  = NULL;
 
    content_dir[0]         = '\0';
 
-   if (filebrowser_get_type() == FILEBROWSER_SCAN_FILE)
-   {
-      menu_entries_get_last_stack(&menu_path, NULL, NULL, NULL, NULL);
+   menu_entries_get_last_stack(&menu_path, NULL, NULL, NULL, NULL);
 
+   /* The folder entry picks the folder, any other entry its file */
+   if (type == FILE_TYPE_MANUAL_SCAN_DIRECTORY)
+   {
+      if (menu_path && *menu_path)
+         strlcpy(content_dir, menu_path, sizeof(content_dir));
+   }
+   else
+   {
 #if TARGET_OS_IPHONE
       fill_pathname_expand_special(dir_path, menu_path, sizeof(dir_path));
       menu_path = dir_path;
 #endif
-
-      fill_pathname_join_special(content_dir, menu_path, path, sizeof(content_dir));
+      /* A path that does not fit is refused, not cut short */
+      if (   !menu_path
+          || fill_pathname_join_special(content_dir, menu_path, path,
+               sizeof(content_dir)) >= sizeof(content_dir))
+         return 0;
    }
-   else
-   {
-      /* Get user-selected scan directory */
-      menu_entries_get_last_stack(&menu_path,
-            NULL, NULL, NULL, NULL);
-      if (menu_path && *menu_path)
-         strlcpy(content_dir, menu_path, sizeof(content_dir));
-   }
-   /* 'Reset' file browser */
-   filebrowser_clear_type();
 
-
-#ifdef HAVE_COCOATOUCH
-   {
-      /* For iOS, set the path using realpath because the path name
-       * can start with /private and this ensures the path starts with it.
-       * This will allow the path to be properly substituted when
-       * fill_pathname_expand_special() is called. */
-      char tmp_dir[DIR_MAX_LENGTH];
-      tmp_dir[0] = '\0';
-      fill_pathname_expand_special(tmp_dir, content_dir, sizeof(content_dir));
-      realpath(tmp_dir, content_dir);
-   }
-#endif
-
-   /* Update manual content scan settings */
-   manual_content_scan_set_menu_content_dir(content_dir);
-
-   /* Return to 'manual content scan' menu */
-   menu_entries_flush_stack(MENU_ENUM_LABEL_DEFERRED_MANUAL_CONTENT_SCAN_LIST_STR, flush_type);
-
+   action_ok_manual_content_scan_set_dir(content_dir);
    return 0;
 }
 
@@ -4884,6 +4909,63 @@ static int action_ok_input_bt_pair(const char *path,
    return 0;
 }
 
+/* Information > Input Information: the model of controller on the
+ * entry's port left out, or one left out read again; the controller
+ * driver is restarted for it, as only a connect looks. */
+static int action_ok_input_device_ignore_change(size_t entry_idx,
+      bool ignore)
+{
+   char msg[128];
+   size_t _len               = 0;
+   uint16_t vid              = 0;
+   uint16_t pid              = 0;
+   settings_t *settings      = config_get_ptr();
+   struct menu_state *menu_st = menu_state_get_ptr();
+   char *list                = settings->arrays.input_ignore_devices;
+
+   if (ignore)
+   {
+      vid = input_config_get_device_vid((unsigned)entry_idx);
+      pid = input_config_get_device_pid((unsigned)entry_idx);
+      if (     (!vid && !pid)
+            || !input_ignore_devices_add(list,
+               sizeof(settings->arrays.input_ignore_devices), vid, pid))
+         return 0;
+      _len = snprintf(msg, sizeof(msg),
+            msg_hash_to_str(MSG_INPUT_DEVICE_IGNORED),
+            (unsigned)entry_idx + 1, (unsigned)vid, (unsigned)pid);
+   }
+   else
+   {
+      if (!input_ignore_devices_at(list, (unsigned)entry_idx, &vid, &pid))
+         return 0;
+      input_ignore_devices_remove(list, vid, pid);
+      _len = snprintf(msg, sizeof(msg),
+            msg_hash_to_str(MSG_INPUT_DEVICE_UNIGNORED),
+            (unsigned)vid, (unsigned)pid);
+   }
+   settings->flags |= SETTINGS_FLG_MODIFIED;
+   joypad_driver_reinit(input_driver_current_data(),
+         settings->arrays.input_joypad_driver);
+   runloop_msg_queue_push(msg, _len, 1, 180, true, NULL,
+         MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+   menu_st->flags |=  MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   menu_st->flags &= ~MENU_ST_FLAG_PREVENT_POPULATE;
+   return 0;
+}
+
+static int action_ok_input_device_ignore(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   return action_ok_input_device_ignore_change(entry_idx, true);
+}
+
+static int action_ok_input_device_unignore(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   return action_ok_input_device_ignore_change(entry_idx, false);
+}
+
 #ifdef HAVE_WINUSB_BIND
 /* Information > Input Information: every DualShock 3 plugged in moved
  * to WinUSB, or given back to Windows' own driver. */
@@ -4907,6 +4989,13 @@ static int action_ok_input_gca_enable(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
    winusb_bind_request(WINUSB_BIND_GCA, true);
+   return 0;
+}
+
+static int action_ok_input_xid_enable(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   winusb_bind_request(WINUSB_BIND_XID, true);
    return 0;
 }
 #endif
@@ -6363,6 +6452,10 @@ static int action_ok_core_options_flush(const char *path,
    return 0;
 }
 
+#if defined(_MSC_VER) && _MSC_VER == 1400
+/* VC8's optimizer crashes on this function in Griffin builds. */
+#pragma optimize("", off)
+#endif
 static int action_ok_dialog_init(struct menu_state *menu_st)
 {
    menu_displaylist_info_t info;
@@ -6400,6 +6493,10 @@ error:
    menu_displaylist_info_free(&info);
    return -1;
 }
+
+#if defined(_MSC_VER) && _MSC_VER == 1400
+#pragma optimize("", on)
+#endif
 
 int action_ok_quit(const char *path, const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -8627,7 +8724,8 @@ static int action_ok_state_slot_run(const char *path,
    menu_entries_pop_stack(&new_selection_ptr, 0, 0);
    menu_st->selection_ptr     = 0;
 
-   menu_st->driver_data->state_slot_run = idx - 1;
+   menu_st->driver_data->state_slot_run         = idx - 1;
+   menu_st->driver_data->state_slot_run_pending = true;
 
    menu_st->flags |=  MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
    menu_st->flags &= ~MENU_ST_FLAG_PREVENT_POPULATE;
@@ -9755,10 +9853,13 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
 #endif
          {MENU_ENUM_LABEL_RUN_MUSIC,                           action_ok_audio_run},
          {MENU_ENUM_LABEL_INPUT_BT_PAIR,                       action_ok_input_bt_pair},
+         {MENU_ENUM_LABEL_INPUT_DEVICE_IGNORE,                 action_ok_input_device_ignore},
+         {MENU_ENUM_LABEL_INPUT_DEVICE_UNIGNORE,               action_ok_input_device_unignore},
 #ifdef HAVE_WINUSB_BIND
          {MENU_ENUM_LABEL_INPUT_DS3_ENABLE,                    action_ok_input_ds3_enable},
          {MENU_ENUM_LABEL_INPUT_DS3_RESTORE,                   action_ok_input_ds3_restore},
          {MENU_ENUM_LABEL_INPUT_GCA_ENABLE,                    action_ok_input_gca_enable},
+         {MENU_ENUM_LABEL_INPUT_XID_ENABLE,                    action_ok_input_xid_enable},
 #endif
 #ifdef HAVE_AUDIOMIXER
          {MENU_ENUM_LABEL_ADD_TO_MIXER_AND_COLLECTION,         action_ok_audio_add_to_mixer_and_collection},
@@ -10418,10 +10519,16 @@ static int menu_cbs_init_bind_ok_compare_type(menu_file_list_cbs_t *cbs,
                BIND_ACTION_OK(cbs, action_ok_push_random_dir);
             break;
          case FILE_TYPE_CARCHIVE:
-            if (filebrowser_get_type() == FILEBROWSER_SCAN_FILE)
+            if (filebrowser_get_type() == FILEBROWSER_MANUAL_SCAN_DIR)
             {
                BIND_ACTION_OK(cbs, action_ok_path_manual_scan_directory);
             }
+#ifdef HAVE_LIBRETRODB
+            else if (filebrowser_get_type() == FILEBROWSER_SCAN_FILE)
+            {
+               BIND_ACTION_OK(cbs, action_ok_path_scan_file);
+            }
+#endif
 #ifdef HAVE_COMPRESSION
             else if (filebrowser_get_type() == FILEBROWSER_SELECT_OVERLAY)
             {
@@ -10580,10 +10687,16 @@ static int menu_cbs_init_bind_ok_compare_type(menu_file_list_cbs_t *cbs,
 #endif
             /* fall through */
          case FILE_TYPE_PLAIN:
-            if (filebrowser_get_type() == FILEBROWSER_SCAN_FILE)
+            if (filebrowser_get_type() == FILEBROWSER_MANUAL_SCAN_DIR)
             {
                BIND_ACTION_OK(cbs, action_ok_path_manual_scan_directory);
             }
+#ifdef HAVE_LIBRETRODB
+            else if (filebrowser_get_type() == FILEBROWSER_SCAN_FILE)
+            {
+               BIND_ACTION_OK(cbs, action_ok_path_scan_file);
+            }
+#endif
             else if (cbs->enum_idx != MSG_UNKNOWN)
             {
                switch (cbs->enum_idx)

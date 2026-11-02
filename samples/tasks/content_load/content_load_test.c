@@ -20,6 +20,11 @@
  *    refused, and the first still completes;
  *  - reinit deferred: a driver reinit asked for while the load is in
  *    flight leaves the drivers as they are - the load rebuilds them;
+ *  - midi boot / midi requested: a core that asks for the MIDI
+ *    interface in its load - at boot, or in a staged load on the old
+ *    session's drivers - plays through the device, through a driver
+ *    reinit too; its note-off at unload reaches the device, and a core
+ *    that does not ask has it shut;
  *  - fallback: a core that cannot be loaded ends on the dummy core
  *    with the drivers rebuilt and the menu up;
  *  - not a core: a library that opens but lacks retro_init does the
@@ -28,6 +33,18 @@
  *    held - nothing is made or read under the playlist directory,
  *    the playlists tab lists nothing - and the release makes the
  *    builtin folder, loads favorites and history, and lists the tab;
+ *  - playlist state slot: an entry run from its Load State list loads
+ *    the slot picked there, over an auto state and with none, and Auto
+ *    loads the auto state with Auto Load State off, though the menu has
+ *    moved on by the time the load reaches the content;
+ *  - core title held: the menu's core title shows the title from
+ *    before a playlist Run or the one after it, nothing in between;
+ *  - menu sound close: a menu sound playing when Close Content is
+ *    confirmed plays on through the staged close and past it - the
+ *    device carried through the driver stage, never stopped, the
+ *    sound not reloaded under itself - and the tone handed over whole;
+ *  - screenshot history: a screenshot is added to the image history,
+ *    with or without the imageviewer core;
  *  - quit waits for a save: a quit from the frame loop while a state
  *    is being written returns to the loop at once, which presents
  *    frames - the core not run - until the state is written, and only
@@ -40,6 +57,7 @@
  */
 
 #include <stdint.h>
+#include <math.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,6 +68,7 @@
 #include <dynamic/dylib.h>
 #include <file/config_file.h>
 #include <file/file_path.h>
+#include <lists/string_list.h>
 #include <streams/file_stream.h>
 #include <time/rtime.h>
 #include <retro_timers.h>
@@ -66,6 +85,7 @@
 #include "../../../verbosity.h"
 #include "../../../gfx/video_driver.h"
 #include "../../../audio/audio_driver.h"
+#include "../../../midi_driver.h"
 #include "../../../gfx/video_defines.h"
 #include "../../../menu/menu_driver.h"
 #include "../../../tasks/task_content.h"
@@ -448,6 +468,7 @@ static void lane_audio_kept(void)
    struct load_frame log[LOAD_FRAMES];
    audio_driver_t saved = audio_null;
    unsigned had         = failures;
+   bool time_stretch    = config_get_ptr()->bools.audio_time_stretch;
    unsigned n;
 
    audio_null.init               = kept_init;
@@ -475,6 +496,25 @@ static void lane_audio_kept(void)
          "across the load the audio device was closed %u and opened %u time(s)",
          kept_frees, kept_opens);
 
+   /* Time stretch keeps the rate from changing in place: the device
+    * is set aside through the driver stage and taken back instead. */
+   kept_opens = kept_frees = 0;
+   configuration_set_bool(config_get_ptr(),
+         config_get_ptr()->bools.audio_time_stretch, true);
+   open_menu();
+   CHECK(task_push_load_contentless_core_from_menu(core_path),
+         "the time-stretch load was not started");
+   n = run_load(log, LOAD_FRAMES);
+   configuration_set_bool(config_get_ptr(),
+         config_get_ptr()->bools.audio_time_stretch, time_stretch);
+   CHECK(n < LOAD_FRAMES && core_is_up(),
+         "the time-stretch load did not bring the core up within %u frames",
+         LOAD_FRAMES);
+   CHECK(kept_opens == 0 && kept_frees == 0
+         && audio_state_get_ptr()->context_audio_data == &kept_token,
+         "with time stretch, across the load the audio device was closed"
+         " %u and opened %u time(s)", kept_frees, kept_opens);
+
    kept_opens = kept_frees = 0;
    putenv((char*)"RETROARCH_AUDIO_KEEP=0");
    open_menu();
@@ -494,6 +534,390 @@ static void lane_audio_kept(void)
    if (failures == had)
       fprintf(stderr, "[pass] audio kept lane: the device stays open across"
             " a content load; with keeping off it is closed and opened\n");
+}
+
+#ifdef HAVE_AUDIOMIXER
+/* ------------------------------------------------------------------ */
+/* Lane: menu sound through a confirmed Close Content                  */
+/* ------------------------------------------------------------------ */
+
+/* The null driver gets a device that records what it is handed, and
+ * whether it was running when it was handed it. */
+#define TAP_MAX (48000 * 2 * 4)
+static int16_t  tap_buf[TAP_MAX];
+static size_t   tap_len;
+static unsigned tap_stops, tap_writes_stopped;
+static bool     tap_running;
+static int      tap_token;
+static void *tap_init(const char *device, unsigned rate, unsigned latency,
+      unsigned *new_rate)
+{
+   (void)device; (void)latency;
+   *new_rate   = rate;
+   tap_running = true;
+   return &tap_token;
+}
+static ssize_t tap_write(void *data, const void *buf, size_t len)
+{
+   size_t n = len / sizeof(int16_t);
+   (void)data;
+   if (!tap_running)
+      tap_writes_stopped++;
+   if (tap_len + n > TAP_MAX)
+      n = TAP_MAX - tap_len;
+   memcpy(tap_buf + tap_len, buf, n * sizeof(int16_t));
+   tap_len += n;
+   return (ssize_t)len;
+}
+static bool tap_stop(void *data)
+{
+   (void)data;
+   tap_stops++;
+   tap_running = false;
+   return true;
+}
+static bool tap_start(void *data, bool shutdown)
+{
+   (void)data; (void)shutdown;
+   tap_running = true;
+   return true;
+}
+static bool tap_alive(void *data) { (void)data; return tap_running; }
+static void tap_nonblock(void *data, bool state) { (void)data; (void)state; }
+static bool tap_float(void *data) { (void)data; return false; }
+static void tap_free(void *data) { (void)data; tap_running = false; }
+
+/* One second of a 440 Hz stereo tone, ramped in and out over 10 ms */
+#define TONE_RATE 48000
+#define TONE_AMP  12000.0
+static bool write_tone(const char *path)
+{
+   static const unsigned frames = TONE_RATE;
+   unsigned char hdr[44];
+   FILE *f;
+   unsigned i;
+
+   memcpy(hdr, "RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0\x02\0"
+         "\0\0\0\0\0\0\0\0\x04\0\x10\0data\0\0\0\0", 44);
+#define PUT32(o, v) do { uint32_t v_ = (uint32_t)(v); hdr[(o)] = v_ & 0xff; \
+   hdr[(o) + 1] = (v_ >> 8) & 0xff; hdr[(o) + 2] = (v_ >> 16) & 0xff; \
+   hdr[(o) + 3] = (v_ >> 24) & 0xff; } while (0)
+   PUT32(4,  36 + frames * 4);
+   PUT32(24, TONE_RATE);
+   PUT32(28, TONE_RATE * 4);
+   PUT32(40, frames * 4);
+#undef PUT32
+   if (!(f = fopen(path, "wb")))
+      return false;
+   fwrite(hdr, 1, sizeof(hdr), f);
+   for (i = 0; i < frames; i++)
+   {
+      unsigned char s[4];
+      double env  = 1.0;
+      int16_t v;
+      if (i < 480)
+         env = i / 480.0;
+      else if (frames - i < 480)
+         env = (frames - i) / 480.0;
+      v    = (int16_t)(TONE_AMP * env
+            * sin(2.0 * 3.14159265358979 * 440.0 * i / TONE_RATE));
+      s[0] = s[2] = (unsigned char)((uint16_t)v & 0xff);
+      s[1] = s[3] = (unsigned char)(((uint16_t)v >> 8) & 0xff);
+      fwrite(s, 1, sizeof(s), f);
+   }
+   fclose(f);
+   return true;
+}
+
+/* The largest step between neighbouring left samples from @from on:
+ * the tone moves at most 2*pi*440/48000*TONE_AMP (~690) per sample,
+ * a cut or a splice moves much further. */
+static int tap_worst_step(size_t from)
+{
+   size_t i;
+   int worst = 0;
+   for (i = from + 2; i < tap_len; i += 2)
+   {
+      int d = tap_buf[i] - tap_buf[i - 2];
+      if (d < 0)
+         d = -d;
+      if (d > worst)
+         worst = d;
+   }
+   return worst;
+}
+
+/* A menu sound playing when Close Content is confirmed keeps playing
+ * through the staged close: the device is not stopped while the menu
+ * feeds it between the stages, and what it is handed is the tone,
+ * whole, on both sides of the driver stage. */
+static void lane_menu_sound_close(void)
+{
+   audio_driver_t saved       = audio_null;
+   settings_t *settings       = config_get_ptr();
+   struct menu_state *menu_st = menu_state_get_ptr();
+   bool menu_audio            = settings->bools.audio_enable_menu;
+   bool menu_audio_ok         = settings->bools.audio_enable_menu_ok;
+   char assets[sizeof(settings->paths.directory_assets)];
+   char sounds[600], tone[640];
+   size_t i, last_heard = 0, switch_end = 0;
+   unsigned n;
+   unsigned had = failures;
+   int worst;
+
+   audio_null.init               = tap_init;
+   audio_null.write              = tap_write;
+   audio_null.stop               = tap_stop;
+   audio_null.start              = tap_start;
+   audio_null.alive              = tap_alive;
+   audio_null.set_nonblock_state = tap_nonblock;
+   audio_null.free               = tap_free;
+   audio_null.use_float          = tap_float;
+   configuration_set_bool(settings, settings->bools.audio_enable_menu, true);
+   configuration_set_bool(settings, settings->bools.audio_enable_menu_ok, true);
+   command_event(CMD_EVENT_AUDIO_REINIT, NULL);
+   pump(5);
+
+   /* The tone is the menu's OK sound, found where an install keeps its
+    * sounds and loaded the way the frontend loads them - and loads
+    * them again after every driver stage. */
+   strlcpy(assets, settings->paths.directory_assets, sizeof(assets));
+   strlcpy(settings->paths.directory_assets, harness_dir,
+         sizeof(settings->paths.directory_assets));
+   snprintf(sounds, sizeof(sounds), "%s/sounds", harness_dir);
+   path_mkdir(sounds);
+   snprintf(tone, sizeof(tone), "%s/ok.wav", sounds);
+   CHECK(write_tone(tone), "the tone was not written");
+   audio_driver_load_system_sounds();
+   pump(10);
+
+   open_menu();
+   CHECK(task_push_load_contentless_core_from_menu(core_path),
+         "the load was not started");
+   pump(LOAD_FRAMES);
+   CHECK(core_is_up(), "the load did not go through");
+   open_menu();
+   pump(5);
+
+   /* The OK of the confirmation plays; the confirmed command runs on
+    * the next iteration, as from the dialog. Each frame takes a
+    * display period, so the menu's feed is the device's. */
+   tap_len   = 0;
+   tap_stops = tap_writes_stopped = 0;
+   audio_driver_mixer_play_menu_sound(AUDIO_MIXER_SYSTEM_SLOT_OK);
+   pump(1);
+   retro_sleep(16);
+   menu_st->dialog_st.pending_cmd = CMD_EVENT_CLOSE_CONTENT;
+   for (n = 0; n < 30; n++)
+   {
+      bool was_switching = runloop_is_content_switching();
+      pump(1);
+      if (was_switching && !runloop_is_content_switching())
+         switch_end = tap_len;
+      retro_sleep(16);
+   }
+   CHECK(!runloop_is_content_switching() && switch_end
+         && runloop_state_get_ptr()->current_core_type == CORE_TYPE_DUMMY,
+         "the close did not finish");
+
+   CHECK(tap_stops == 0 && tap_writes_stopped == 0,
+         "the device was stopped %u time(s) across the close, and handed"
+         " %u write(s) while stopped", tap_stops, tap_writes_stopped);
+   worst = tap_worst_step(0);
+   CHECK(worst < 1000,
+         "the sound handed to the device jumps by %d in one sample", worst);
+   for (i = 0; i < tap_len; i += 2)
+      if (tap_buf[i] > 1000 || tap_buf[i] < -1000)
+         last_heard = i;
+   CHECK(last_heard > switch_end,
+         "the sound did not play on past the close"
+         " (last heard at %lu, the close done at %lu)",
+         (unsigned long)last_heard, (unsigned long)switch_end);
+
+   /* Start Core, as the menu would, to leave a core running. */
+   {
+      content_ctx_info_t content_info = {0};
+      CHECK(task_push_start_current_core(&content_info),
+            "Start Core was not started");
+      pump(LOAD_FRAMES);
+   }
+   configuration_set_bool(settings, settings->bools.audio_enable_menu,
+         menu_audio);
+   configuration_set_bool(settings, settings->bools.audio_enable_menu_ok,
+         menu_audio_ok);
+   strlcpy(settings->paths.directory_assets, assets,
+         sizeof(settings->paths.directory_assets));
+   audio_null = saved;
+   command_event(CMD_EVENT_AUDIO_REINIT, NULL);
+   pump(5);
+   remove(tone);
+   rmdir(sounds);
+   if (failures == had)
+      fprintf(stderr, "[pass] menu-sound-close lane\n");
+}
+#endif
+
+/* ------------------------------------------------------------------ */
+/* Lanes: MIDI                                                         */
+/* ------------------------------------------------------------------ */
+
+/* Stands in for the null MIDI driver (same ident, same one "Null"
+ * output), installed in midi_drivers[] before the frontend boots, and
+ * counts what reaches it: device opens and frees, and the note-ons and
+ * note-offs the harness core plays through its interface. */
+static unsigned midi_opens, midi_frees, midi_note_ons, midi_note_offs;
+static int      midi_token;
+static bool count_midi_avail(struct string_list *list)
+{
+   union string_list_elem_attr attr;
+   attr.i = 0;
+   return string_list_append(list, "Null", attr);
+}
+static void *count_midi_init(const char *input, const char *output)
+{
+   (void)input; (void)output;
+   midi_opens++;
+   return &midi_token;
+}
+static void count_midi_free(void *p) { (void)p; midi_frees++; }
+static bool count_midi_set(void *p, const char *name)
+{ (void)p; return !name || string_is_equal(name, "Null"); }
+static bool count_midi_read(void *p, midi_event_t *event)
+{ (void)p; (void)event; return false; }
+static bool count_midi_write(void *p, const midi_event_t *event)
+{
+   (void)p;
+   if (event->data_size == 3 && (event->data[0] & 0xF0) == 0x90)
+      midi_note_ons++;
+   else if (event->data_size == 3 && (event->data[0] & 0xF0) == 0x80)
+      midi_note_offs++;
+   return true;
+}
+static bool count_midi_flush(void *p) { (void)p; return true; }
+static midi_driver_t count_midi = {
+   "null",
+   count_midi_avail,
+   count_midi_avail,
+   count_midi_init,
+   count_midi_free,
+   count_midi_set,
+   count_midi_set,
+   count_midi_read,
+   count_midi_write,
+   count_midi_flush
+};
+
+static void midi_install_counting_driver(void)
+{
+   unsigned i;
+   /* "null" is always the last entry */
+   for (i = 0; !string_is_equal(midi_drivers[i]->ident, "null"); i++) { }
+   midi_drivers[i] = &count_midi;
+}
+
+/* The core plays a note per frame while its output is enabled: every
+ * note it plays reaches the driver. */
+static void midi_check_plays(const char *when)
+{
+   unsigned core_before   = core_export("harness_core_midi_notes");
+   unsigned driver_before = midi_note_ons;
+   unsigned core_played, driver_got;
+
+   CHECK(midi_driver_output_enabled(),
+         "%s: the core asked for MIDI and the output is shut", when);
+   pump(3);
+   core_played = core_export("harness_core_midi_notes") - core_before;
+   driver_got  = midi_note_ons - driver_before;
+   CHECK(core_played >= 1 && driver_got == core_played,
+         "%s: over 3 frames the core played %u note(s), the driver got %u",
+         when, core_played, driver_got);
+}
+
+/* Boot with -L: the core asks in its load, before the first
+ * drivers_init. HARNESS_CORE_MIDI was set for the boot by main(). */
+static void lane_midi_boot(void)
+{
+   unsigned had = failures;
+
+   putenv((char*)"HARNESS_CORE_MIDI=");
+   CHECK(midi_opens >= 1, "the MIDI device was never opened at boot");
+   /* The core plays only while it runs */
+   if (menu_is_up())
+      command_event(CMD_EVENT_MENU_TOGGLE, NULL);
+   midi_check_plays("boot");
+
+   if (failures == had)
+      fprintf(stderr, "[pass] midi boot lane: a core asking at boot plays"
+            " through the device\n");
+}
+
+/* What a core's MIDI request has to outlive, and where it ends:
+ *  - a staged load: the ask comes on the old session's drivers, which
+ *    the load then rebuilds - the device is open on the new ones;
+ *  - a driver reinit while it runs (DRIVER_LIFETIME_RESET, as
+ *    SET_SYSTEM_AV_INFO does);
+ *  - its unload: the note-off it sends from retro_deinit reaches the
+ *    device, then the device is shut - closing content and starting a
+ *    core that does not ask leaves it shut, nothing left open. */
+static void lane_midi_requested(void)
+{
+   struct load_frame log[LOAD_FRAMES];
+   struct menu_state *menu_st = menu_state_get_ptr();
+   unsigned had = failures;
+   unsigned offs_before;
+   unsigned n;
+
+   putenv((char*)"HARNESS_CORE_MIDI=1");
+   open_menu();
+   CHECK(task_push_load_contentless_core_from_menu(core_path),
+         "the load was not started");
+   n = run_load(log, LOAD_FRAMES);
+   putenv((char*)"HARNESS_CORE_MIDI=");
+   CHECK(n < LOAD_FRAMES && core_is_up(),
+         "the load did not bring the core up within %u frames", LOAD_FRAMES);
+   midi_check_plays("staged load");
+
+   command_event(CMD_EVENT_REINIT, NULL);
+   pump(1);
+   midi_check_plays("driver reinit");
+
+   offs_before = midi_note_offs;
+   open_menu();
+   path_set(RARCH_PATH_CORE_LAST, core_path);
+   menu_st->flags |= MENU_ST_FLAG_PENDING_CLOSE_CONTENT;
+   pump(1);
+   n = run_load(log, LOAD_FRAMES);
+   CHECK(n < LOAD_FRAMES && !runloop_is_content_switching(),
+         "the close did not finish within %u frames", LOAD_FRAMES);
+   pump(2);
+   CHECK(midi_note_offs == offs_before + 1,
+         "the core's note-off at unload reached the device %u time(s)",
+         midi_note_offs - offs_before);
+   CHECK(!midi_driver_output_enabled() && midi_opens == midi_frees,
+         "after the close the MIDI output is %s, opened %u freed %u",
+         midi_driver_output_enabled() ? "open" : "shut",
+         midi_opens, midi_frees);
+
+   /* Start Core, as the menu would: a core that does not ask */
+   {
+      content_ctx_info_t content_info = {0};
+      CHECK(task_push_start_current_core(&content_info),
+            "Start Core was not started");
+      n = run_load(log, LOAD_FRAMES);
+      CHECK(n < LOAD_FRAMES && core_is_up()
+            && runloop_state_get_ptr()->current_core_type != CORE_TYPE_DUMMY,
+            "Start Core did not go through");
+      pump(2);
+   }
+   CHECK(!midi_driver_output_enabled() && midi_opens == midi_frees,
+         "for a core that never asked the MIDI output is %s, opened %u "
+         "freed %u", midi_driver_output_enabled() ? "open" : "shut",
+         midi_opens, midi_frees);
+
+   if (failures == had)
+      fprintf(stderr, "[pass] midi requested lane: the device plays across"
+            " a staged load and a reinit, takes the note-off at unload,"
+            " and is shut for a core that does not ask\n");
 }
 
 
@@ -1807,7 +2231,7 @@ static bool rr_ask(command_t *cmd,
    rr_replies  = rr_in_command_replies = 0;
    rr_reply[0] = '\0';
    ok          = rr_run(cmd, handler, arg);
-   for (n = 0; n < 300 && !rr_replies; n++)
+   for (n = 0; n < 5000 && !rr_replies; n++)
       pump(1);
    return ok;
 }
@@ -1993,6 +2417,270 @@ static void lane_state_slot_reply(void)
       fprintf(stderr, "[pass] state-slot-reply lane\n");
 }
 
+#if defined(HAVE_DYNAMIC) && defined(HAVE_MENU)
+/* ------------------------------------------------------------------ */
+/* Lane: playlist Load State slot                                      */
+/* ------------------------------------------------------------------ */
+
+static void core_set_state_mark(unsigned mark)
+{
+   dylib_t lib = runloop_state_get_ptr()->lib_handle;
+   void (*fn)(unsigned) = lib
+      ? (void (*)(unsigned))dylib_proc(lib, "harness_core_set_state_mark")
+      : NULL;
+   if (fn)
+      fn(mark);
+}
+
+/* Runs frames until no content load - read ahead or staged - and no
+ * state task is in flight: a load waits out a save still inside the
+ * core, which under a sanitizer takes many frames. */
+static bool load_in_flight(void)
+{
+   return runloop_is_content_switching()
+      || (content_state_get_ptr()->flags & CONTENT_ST_FLAG_DEFERRED_LOAD_PENDING)
+      || state_task_in_flight();
+}
+
+static bool settle(void)
+{
+   unsigned i;
+   for (i = 0; i < 5000 && load_in_flight(); i++)
+      pump(1);
+   pump(2);
+   return !load_in_flight();
+}
+
+/* Saves the running core to @slot, its state marked @mark: retried
+ * across frames while another blocking task (the previous save's
+ * thumbnail) holds the queue. */
+static bool save_marked_slot(unsigned slot, unsigned mark, const char *path)
+{
+   settings_t *settings = config_get_ptr();
+   unsigned i;
+
+   remove(path);
+   core_set_state_mark(mark);
+   configuration_set_int(settings, settings->ints.state_slot, (int)slot);
+   for (i = 0; i < 200 && !path_is_valid(path); i++)
+   {
+      if (!state_task_in_flight() && !runloop_is_content_switching())
+         command_event(CMD_EVENT_SAVE_STATE, NULL);
+      pump(1);
+   }
+   for (i = 0; i < 1000 && state_task_in_flight(); i++)
+      pump(1);
+   return path_is_valid(path) && !state_task_in_flight();
+}
+
+/* Runs the playlist's first entry from its Load State list, OK on
+ * slot @slot as the menu does, and runs the frames of the load. */
+static void playlist_run_from_slot(const char *slot)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+
+   menu_st->driver_data->rpl_entry_selection_ptr = 0;
+   CHECK(accept_open_screen(DISPLAYLIST_STATE_SLOT_RUN,
+            MENU_ENUM_LABEL_STATE_SLOT_RUN_STR,
+            MENU_ENUM_LABEL_STATE_SLOT_RUN, "Load State") > 1,
+         "the entry's Load State list is empty");
+   CHECK(accept_press_ok(slot), "no slot %s in the Load State list", slot);
+   CHECK(runloop_is_content_switching(),
+         "OK on a Load State slot did not start a staged load");
+   CHECK(settle() && core_is_up(),
+         "the load from the playlist did not go through");
+}
+
+/* A playlist entry run from its Load State list starts at the slot
+ * picked there - over an auto state, and with no auto state - though
+ * the menu has rebuilt its lists by the time the load reaches the
+ * content. */
+static void lane_playlist_state_slot(void)
+{
+   playlist_config_t cfg;
+   struct playlist_entry entry;
+   content_ctx_info_t info;
+   runloop_state_t *runloop_st = runloop_state_get_ptr();
+   settings_t *settings        = config_get_ptr();
+   bool auto_load              = settings->bools.savestate_auto_load;
+   char game[600], lpl[600], slot_path[PATH_MAX_LENGTH];
+   char spare_path[PATH_MAX_LENGTH], auto_path[PATH_MAX_LENGTH + 8];
+   FILE *f;
+   unsigned had = failures;
+
+   snprintf(game, sizeof(game), "%s/slots.bin", harness_dir);
+   if ((f = fopen(game, "wb")))
+   {
+      fputs("harness content", f);
+      fclose(f);
+   }
+   memset(&info, 0, sizeof(info));
+   CHECK(settle(), "a load or state task from before is still in flight");
+   open_menu();
+
+   /* Slot 4 holds one state, the auto state another. */
+   CHECK(task_push_load_content_with_new_core_from_menu(core_path, game,
+            &info, CORE_TYPE_PLAIN, NULL, NULL),
+         "the content load was not started");
+   CHECK(settle() && core_is_up()
+         && strstr(path_get(RARCH_PATH_BASENAME), "slots"),
+         "the content load did not go through");
+
+   runloop_get_savestate_path(slot_path,  sizeof(slot_path),  4);
+   runloop_get_savestate_path(spare_path, sizeof(spare_path), 7);
+   snprintf(auto_path, sizeof(auto_path), "%s.auto",
+         runloop_st->name.savestate);
+
+   CHECK(save_marked_slot(4, 0x11, slot_path),
+         "slot 4 was not written to %s", slot_path);
+   CHECK(save_marked_slot(7, 0x22, spare_path),
+         "slot 7 was not written to %s", spare_path);
+   remove(auto_path);
+   CHECK(rename(spare_path, auto_path) == 0, "no auto state at %s", auto_path);
+   configuration_set_int(settings, settings->ints.state_slot, 0);
+   configuration_set_bool(settings, settings->bools.savestate_auto_load, true);
+
+   /* The playlist holds the content, with no slot of its own. */
+   memset(&cfg, 0, sizeof(cfg));
+   snprintf(lpl, sizeof(lpl), "%s/playlists/slots.lpl", harness_dir);
+   playlist_config_set_path(&cfg, lpl);
+   cfg.capacity = 16;
+   CHECK(playlist_init_cached(&cfg), "the playlist was not cached");
+   memset(&entry, 0, sizeof(entry));
+   entry.path      = game;
+   entry.label     = (char*)"slots";
+   entry.core_path = core_path;
+   entry.core_name = (char*)"content_load_harness";
+   CHECK(playlist_get_cached()
+         && playlist_push(playlist_get_cached(), &entry),
+         "the entry was not added to the playlist");
+
+   /* Leave the content, so the entry's run is a new load. */
+   CHECK(task_push_load_contentless_core_from_menu(core_path),
+         "the contentless load was not started");
+   CHECK(settle() && core_is_up(), "the contentless load did not go through");
+
+   playlist_run_from_slot("4");
+   CHECK(core_export("harness_core_state_loaded") == 0x11,
+         "with an auto state, the load started from %s, not slot 4",
+         core_export("harness_core_state_loaded") == 0x22
+         ? "the auto state" : "no state");
+   CHECK(settings->ints.state_slot == 4,
+         "the active slot is %d after starting from slot 4",
+         settings->ints.state_slot);
+
+   /* Auto, picked by name, loads the auto state with Auto Load State
+    * off. */
+   configuration_set_bool(settings, settings->bools.savestate_auto_load, false);
+   CHECK(task_push_load_contentless_core_from_menu(core_path),
+         "the contentless load before Auto was not started");
+   CHECK(settle() && core_is_up(),
+         "the contentless load before Auto did not go through");
+   playlist_run_from_slot("Auto");
+   CHECK(core_export("harness_core_state_loaded") == 0x22,
+         "Auto picked with Auto Load State off started from %s",
+         core_export("harness_core_state_loaded") == 0x11
+         ? "slot 4" : "no state");
+   configuration_set_bool(settings, settings->bools.savestate_auto_load, true);
+
+   /* Again with no auto state to fall back on. */
+   remove(auto_path);
+   CHECK(task_push_load_contentless_core_from_menu(core_path),
+         "the second contentless load was not started");
+   CHECK(settle() && core_is_up(),
+         "the second contentless load did not go through");
+   playlist_run_from_slot("4");
+   CHECK(core_export("harness_core_state_loaded") == 0x11,
+         "without an auto state, the load started from %s, not slot 4",
+         core_export("harness_core_state_loaded") ? "a state" : "no state");
+   CHECK(!menu_state_get_ptr()->driver_data->state_slot_run_pending,
+         "the Load State pick outlived the load it was made for");
+
+   configuration_set_bool(settings, settings->bools.savestate_auto_load,
+         auto_load);
+   playlist_free_cached();
+   remove(lpl);
+   remove(slot_path);
+   remove(auto_path);
+   {
+      char png[PATH_MAX_LENGTH + 8];
+      snprintf(png, sizeof(png), "%s.png", slot_path);
+      remove(png);
+      snprintf(png, sizeof(png), "%s.png", spare_path);
+      remove(png);
+   }
+   remove(game);
+   if (failures == had)
+      fprintf(stderr, "[pass] playlist-state-slot lane\n");
+}
+#endif
+
+#if defined(HAVE_DYNAMIC) && defined(HAVE_MENU)
+/* ------------------------------------------------------------------ */
+/* Lane: core title held through a load                                */
+/* ------------------------------------------------------------------ */
+
+/* The menu's core title, read every frame of a playlist Run, shows
+ * the title from before the load or the one after it - nothing in
+ * between - and changes at most once. */
+static void lane_core_title_held(void)
+{
+   content_ctx_info_t info;
+   char game[600];
+   char first[256], last[256], cur[256];
+   char other[256] = "";
+   unsigned n, changes = 0;
+   FILE *f;
+   unsigned had = failures;
+
+   snprintf(game, sizeof(game), "%s/title.bin", harness_dir);
+   if ((f = fopen(game, "wb")))
+   {
+      fputs("harness content", f);
+      fclose(f);
+   }
+   memset(&info, 0, sizeof(info));
+   CHECK(settle(), "a load or state task from before is still in flight");
+   open_menu();
+   CHECK(task_push_load_contentless_core_from_menu(core_path),
+         "the contentless load was not started");
+   CHECK(settle() && core_is_up(), "the contentless load did not go through");
+
+   menu_entries_get_core_title(first, sizeof(first));
+   strlcpy(last, first, sizeof(last));
+   CHECK(task_push_load_content_from_playlist_from_menu(core_path, game,
+            "title", &info, NULL, NULL),
+         "the playlist Run was not started");
+   for (n = 0; n < 5000; n++)
+   {
+      bool going = load_in_flight();
+      menu_entries_get_core_title(cur, sizeof(cur));
+      if (!string_is_equal(cur, last))
+      {
+         changes++;
+         strlcpy(last, cur, sizeof(last));
+         if (!string_is_equal(cur, first) && !*other)
+            strlcpy(other, cur, sizeof(other));
+      }
+      if (!going)
+         break;
+      pump(1);
+   }
+   CHECK(!load_in_flight() && core_is_up()
+         && strstr(path_get(RARCH_PATH_BASENAME), "title"),
+         "the playlist Run did not go through");
+   /* The one change allowed is to the title the load ends on */
+   CHECK(changes <= 1 && (!*other || string_is_equal(other, last)),
+         "the core title changed %u time(s) during the load"
+         " (\"%s\" -> \"%s\" -> \"%s\")",
+         changes, first, other, last);
+
+   remove(game);
+   if (failures == had)
+      fprintf(stderr, "[pass] core-title-held lane\n");
+}
+#endif
+
 /* LOAD_CONTENT and CLOSE_CONTENT, asked by a structured interface,
  * answer once the load is through. The command interfaces outlive the
  * load, and are not polled while it runs: what reaches them waits. */
@@ -2070,7 +2758,10 @@ static void lane_content_reply(const char *dir)
  * by the clock; waiting out a whole period first makes this open the
  * one that starts it, so the screenshot opens well inside the same
  * window, not across a reset that would hand it a fresh one. */
+/* tasks/task_nbio_slice.c's window period */
+#define SS_SLICE_PERIOD_USEC 16666
 static bool ss_hog_stop;
+static retro_time_t ss_hog_open;
 static void ss_hog_handler(retro_task_t *task)
 {
    nbio_budget_t b;
@@ -2079,10 +2770,23 @@ static void ss_hog_handler(retro_task_t *task)
       task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
       return;
    }
-   retro_sleep(17);
+   /* by the clock: a signal can cut a sleep short */
+   while (cpu_features_get_time_usec() - ss_hog_open < 17000)
+      retro_sleep(1);
    task_nbio_slice_open(&b);
+   ss_hog_open = b.start;
    while (task_nbio_slice_within_budget(&b, 0, 0)) { }
    task_nbio_slice_close(&b);
+}
+
+/* A check the harness was descheduled through for a whole period may
+ * have handed the screenshot a fresh window; such a run proves nothing
+ * either way and is taken again. */
+static bool ss_check_late(void)
+{
+   task_queue_check();
+   return cpu_features_get_time_usec() - ss_hog_open
+      >= SS_SLICE_PERIOD_USEC;
 }
 
 static bool ss_is_screenshot(retro_task_t *task, void *user_data)
@@ -2127,7 +2831,7 @@ static void lane_screenshot_steps(const char *dir)
    settings_t *settings = config_get_ptr();
    retro_task_t *hog;
    char path[600], file[640];
-   unsigned had = failures, checks = 0, rows = 240;
+   unsigned had = failures, checks = 0, rows = 240, late = 0, attempt;
 
    if (!core_is_up())
    {
@@ -2150,28 +2854,35 @@ static void lane_screenshot_steps(const char *dir)
    /* With fullpath the name is the file, as given */
    snprintf(path, sizeof(path), "%s/harness_shot.png", dir);
    snprintf(file, sizeof(file), "%s", path);
-   remove(file);
-   CHECK(take_screenshot(dir, path, false, false, true, true),
-         "the screenshot was not started");
-   while (ss_in_flight() && checks < 4 * rows)
+   for (attempt = 0; attempt < 3; attempt++)
    {
-      task_queue_check();
-      checks++;
+      remove(file);
+      CHECK(take_screenshot(dir, path, false, false, true, true),
+            "the screenshot was not started");
+      for (checks = 0, late = 0; ss_in_flight() && checks < 4 * rows; checks++)
+         late += ss_check_late();
+      CHECK(!ss_in_flight(), "the screenshot did not finish in %u checks", checks);
+      CHECK(ss_png_complete(file), "the screenshot file is not a whole PNG");
+      if (!late)
+         break;
    }
-   CHECK(!ss_in_flight(), "the screenshot did not finish in %u checks", checks);
-   CHECK(checks >= rows,
+   CHECK(!late, "a period-long stall in each of %u attempts", attempt);
+   CHECK(late || checks >= rows,
          "the screenshot finished in %u checks for %u rows: encoded in one go",
          checks, rows);
-   CHECK(ss_png_complete(file), "the screenshot file is not a whole PNG");
    remove(file);
 
    /* Cancelled part way through */
-   CHECK(take_screenshot(dir, path, false, false, true, true),
-         "the second screenshot was not started");
+   for (attempt = 0; attempt < 3; attempt++)
    {
       unsigned n;
-      for (n = 0; n < 20; n++)
-         task_queue_check();
+      CHECK(take_screenshot(dir, path, false, false, true, true),
+            "the second screenshot was not started");
+      for (n = 0, late = 0; n < 20; n++)
+         late += ss_check_late();
+      if (ss_in_flight() || !late)
+         break;
+      remove(file);
    }
    CHECK(ss_in_flight(), "the second screenshot was already done");
    {
@@ -2197,6 +2908,52 @@ static void lane_screenshot_steps(const char *dir)
       fprintf(stderr, "[pass] screenshot-steps lane (%u checks for %u rows)\n",
             checks, rows);
 }
+
+#if defined(HAVE_IMAGEVIEWER) || defined(HAVE_MENU)
+/* A screenshot lands on the image history, the Images tab's list, in
+ * a build without the imageviewer core too: the list is the menu's */
+static void lane_screenshot_history(const char *dir)
+{
+   const struct playlist_entry *entry = NULL;
+   playlist_t *hist = g_defaults.image_history;
+   char path[600];
+   size_t before;
+   unsigned had = failures, n;
+
+   CHECK(hist, "history: no image history playlist");
+   if (!hist)
+      return;
+   CHECK(config_get_ptr()->bools.history_list_enable,
+         "history: history lists are off");
+   before = playlist_size(hist);
+
+   snprintf(path, sizeof(path), "%s/harness_history_shot.png", dir);
+   remove(path);
+   CHECK(take_screenshot(dir, path, false, false, true, true),
+         "history: the screenshot was not started");
+   for (n = 0; n < 2000 && ss_in_flight(); n++)
+      task_queue_check();
+   CHECK(!ss_in_flight(), "history: the screenshot did not finish");
+   CHECK(ss_png_complete(path), "history: the screenshot file is not a whole PNG");
+
+   CHECK(playlist_size(hist) == before + 1,
+         "history: %u entries after the screenshot, %u before",
+         (unsigned)playlist_size(hist), (unsigned)before);
+   if (playlist_size(hist))
+      playlist_get_index(hist, 0, &entry);
+   CHECK(entry && entry->path && string_is_equal(
+            path_basename(entry->path), "harness_history_shot.png"),
+         "history: the newest entry is \"%s\", not the screenshot",
+         (entry && entry->path) ? entry->path : "");
+   CHECK(entry && string_is_equal(entry->core_name, "imageviewer"),
+         "history: the entry's core is \"%s\"",
+         (entry && entry->core_name) ? entry->core_name : "");
+
+   remove(path);
+   if (failures == had)
+      fprintf(stderr, "[pass] screenshot-history lane\n");
+}
+#endif
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -2735,6 +3492,9 @@ int main(int argc, char *argv[])
       fprintf(cfg, "savestate_auto_save = \"false\"\n");
       fprintf(cfg, "menu_show_load_content_animation = \"false\"\n");
       fprintf(cfg, "threaded_data_runloop_enable = \"false\"\n");
+      /* The null MIDI driver's one output: the MIDI lane's device */
+      fprintf(cfg, "midi_driver = \"null\"\n");
+      fprintf(cfg, "midi_output = \"Null\"\n");
       /* The records of the cores asked live next to the info cache */
       fprintf(cfg, "libretro_info_path = \"%s\"\n", dir);
       /* Where a contentless core's states go, named after the core:
@@ -2759,6 +3519,9 @@ int main(int argc, char *argv[])
 
    if (getenv("HARNESS_VERBOSE"))
       verbosity_enable();
+   midi_install_counting_driver();
+   /* The boot core asks for MIDI in its load: lane_midi_boot */
+   putenv((char*)"HARNESS_CORE_MIDI=1");
 
    config_file_set_io_default(config_file_io_filestream());
    rtime_init();
@@ -2806,9 +3569,14 @@ int main(int argc, char *argv[])
          "harness core did not start (dummy core running)");
 
    lane_user_dirs_held(dir);
+   lane_midi_boot();
    lane_staged();
    lane_core_opened_once();
    lane_audio_kept();
+#ifdef HAVE_AUDIOMIXER
+   lane_menu_sound_close();
+#endif
+   lane_midi_requested();
 #if defined(HAVE_DYNAMIC)
    lane_probe_cached();
 #endif
@@ -2841,9 +3609,16 @@ int main(int argc, char *argv[])
    lane_replay_reply(dir);
 #endif
    lane_state_slot_reply();
+#if defined(HAVE_DYNAMIC) && defined(HAVE_MENU)
+   lane_playlist_state_slot();
+   lane_core_title_held();
+#endif
    lane_content_reply(dir);
 #if defined(HAVE_SCREENSHOTS) && defined(HAVE_RPNG)
    lane_screenshot_steps(dir);
+#if defined(HAVE_IMAGEVIEWER) || defined(HAVE_MENU)
+   lane_screenshot_history(dir);
+#endif
 #endif
 #if defined(HAVE_DYNAMIC) && defined(HAVE_MENU)
    /* Last: a content load leaves its save state name behind for the

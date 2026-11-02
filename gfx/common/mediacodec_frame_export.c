@@ -28,6 +28,13 @@ mediacodec_frame_exporter_t *mediacodec_frame_exporter_new(
    }
    return e;
 }
+bool mediacodec_frame_exporter_set_retire_notifier(
+      mediacodec_frame_exporter_t *e, void *user,
+      void (*retain)(void *), void (*notify_unref)(void *))
+{
+   return e && android_frame_pool_set_retire_notifier(
+         e->pool, user, retain, notify_unref);
+}
 bool mediacodec_frame_exporter_free(mediacodec_frame_exporter_t *e)
 {
    if (!e)
@@ -51,7 +58,10 @@ int mediacodec_frame_export_color(void *opaque,
    memset(&view, 0, sizeof(view));
    if (!mediacodec_color_resolve(format, coded, &view.color)
          || !view.color.range || !view.color.matrix || view.color.matrix == 2
-         || !view.color.transfer || view.color.transfer == 2
+         || ((!view.color.transfer || view.color.transfer == 2)
+               && (e->pixfmt != IMAGE_PIXFMT_NV12 || view.color.primaries != 1
+                     || view.color.max_cll || view.color.max_fall
+                     || view.color.mastering.present))
          || !view.color.primaries || view.color.primaries == 2)
       return -1;
    view.image = *image;

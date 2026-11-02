@@ -105,7 +105,6 @@ static const struct
    char s_7607974d[19];
    char s_bdf1165f[37];
    char s_6a15d029[27];
-   char s_3817de39[364];
    char s_16ae54ac[322];
    char s_b3e89428[262];
    char s_7af11c30[75];
@@ -1432,6 +1431,7 @@ static const struct
    char s_e6e43c7d[46];
    char s_c1ddd207[45];
    char s_ded83500[48];
+   char s_69c06e41[14];
    char s_690802fe[16];
    char s_7895cc5b[33];
    char s_e46faa42[24];
@@ -1926,7 +1926,6 @@ static const struct
    char s_df763da7[14];
    char s_69dad0e6[49];
    char s_1532af95[59];
-   char s_03fb590d[22];
    char s_7c2f8b04[24];
    char s_b443c25e[16];
    char s_4ad9adf8[27];
@@ -2244,6 +2243,8 @@ static const struct
 #endif
 #endif
    char s_f4341e25[44];
+   char s_e09bad69[8];
+   char s_f66c7b67[8];
    char s_cc973e8a[7];
    char s_b9d37039[185];
    char s_d0a04fe4[17];
@@ -2296,8 +2297,16 @@ static const struct
    char s_4b582a0c[37];
    char s_61213f1d[19];
    char s_95e4b29f[75];
+   char s_fa462638[7];
+   char s_29f97e35[5];
+   char s_569b0627[6];
+   char s_99b1b2f6[7];
+   char s_569b11b0[10];
+   char s_328ddae3[10];
    char s_60258de0[7];
    char s_caf61308[12];
+   char s_5410e874[7];
+   char s_9eb59c3e[10];
    char s_34b2592a[10];
    char s_c7a27b20[12];
    char s_317b17ed[6];
@@ -2340,6 +2349,7 @@ static const struct
    char s_69b801ef[7];
    char s_a40653a7[28];
    char s_52e3d6ea[47];
+   char s_3253994e[7];
    char s_580e244f[7];
    char s_a9c8430e[23];
    char s_f5911f43[36];
@@ -2755,7 +2765,6 @@ static const struct
    char s_aa771128[401];
    char s_e531c55e[130];
    char s_deab66ee[143];
-   char s_5ce79fca[165];
 #ifdef HAVE_GAME_AI
    char s_b7dcc585[38];
    char s_328f4fd8[22];
@@ -3396,7 +3405,6 @@ static const struct
    char s_34a76adb[54];
    char s_88021a14[169];
    char s_fe1a9203[261];
-   char s_2222a23b[121];
    char s_8213bb32[244];
    char s_48462dac[364];
    char s_631de1a2[120];
@@ -3422,7 +3430,6 @@ static const struct
    char s_a55bf936[42];
    char s_c519f84d[52];
    char s_48aefa30[37];
-   char s_5d383a58[51];
    char s_dcf8bd8b[55];
    char s_bce9b94f[57];
    char s_d32f5a63[43];
@@ -3909,7 +3916,6 @@ static const struct
    char s_a363d07a[27];
    char s_9e5bd759[29];
    char s_8d7296ed[28];
-   char s_21580d7c[100];
    char s_fc5e1d2c[51];
    char s_51b22327[37];
    char s_2f6a6e51[20];
@@ -4394,11 +4400,6 @@ static const struct
    "Arquivo de shader.",
    "Arquivo de predefini\303\247\303\243o de shader.",
    "Arquivo de configura\303\247\303\243o.",
-   "Ativar o GameMode do Linux pode melhorar a lat\303\252ncia, corrigir problemas de estalos no "
-   "\303\241udio e maximizar o desempenho geral ao configurar automaticamente sua CPU e GPU para o m"
-   "elhor desempenho poss\303\255vel.\nO software GameMode precisa estar instalado para que isso fun"
-   "cione. Consulte https://github.com/FeralInteractive/gamemode para saber como instalar o GameMode"
-   ".",
    "Mapeia o direcional anal\303\263gico especificado para entrada do D-Pad.\nSe o n\303\272cleo tiv"
    "er suporte nativo para anal\303\263gico, o mapeamento do D-Pad ser\303\241 desativado, a menos q"
    "ue a op\303\247\303\243o '(For\303\247ado)' seja selecionada.\nSe o mapeamento do D-Pad for for"
@@ -5920,6 +5921,7 @@ static const struct
    "(Modo paisagem) Propor\303\247\303\243o da sobreposi\303\247\303\243o",
    "(Modo retrato) Propor\303\247\303\243o da sobreposi\303\247\303\243o",
    "Carrega automaticamente sobreposi\303\247\303\243o favorita",
+   "Jogador 1 e 2",
    "Sobreposi\303\247\303\265es",
    "Sobreposi\303\247\303\243o da Pistola de Luz",
    "Sobreposi\303\247\303\243o do Mouse",
@@ -6423,7 +6425,6 @@ static const struct
    "Personalizado",
    "Pular Refer\303\252ncias de Banco de Dados da Playlist",
    "Verificar CRC em Poss\303\255veis Duplicatas durante a Varredura",
-   "Buscar Arquivo \303\232nico",
    "Playlist para Atualizar",
    "<Personalizado>",
    "<Analisar este diret\303\263rio>",
@@ -6741,6 +6742,8 @@ static const struct
 #endif
 #endif
    "Desativar composi\303\247\303\243o da \303\241rea de trabalho",
+   "Padr\303\243o",
+   "Padr\303\243o",
    "V\303\255deo",
    "Seu driver de gr\303\241ficos n\303\243o \303\251 compat\303\255vel com o driver de v\303\255deo"
    " atual no RetroArch, voltando para o driver %s. Por favor, reinicie o RetroArch para que as muda"
@@ -6795,8 +6798,16 @@ static const struct
    "Posi\303\247\303\243o Y da notifica\303\247\303\243o na tela",
    "\303\215ndice de monitor",
    "Habilitar tela cheia sobre o entalhe (\342\200\234notch\342\200\235) em dispositivos Android",
+   "Pausar",
+   "Alta",
+   "Baixa",
+   "M\303\251dia",
+   "Desligado",
+   "Desligado",
    "Sempre",
    "Autom\303\241tico",
+   "Sempre",
+   "Desligado",
    "Desligado",
    "Autom\303\241tico",
    "180\302\272",
@@ -6839,6 +6850,7 @@ static const struct
    "Escala",
    "Sincroniza\303\247\303\243o de Scanline",
    "Simula\303\247\303\243o do rolamento da linha de varredura",
+   "Escala",
    "V\303\255deo",
    "Sombreadores de v\303\255deo",
    "Atraso de sombreadores autom\303\241ticos",
@@ -7398,9 +7410,6 @@ static const struct
    "s quando o v\303\255deo em thread est\303\241 desativado.",
    "Define o n\303\255vel de registro para a interface. Se um n\303\255vel do registro emitido pela "
    "interface estiver abaixo desse valor, este ser\303\241 ignorado.",
-   "Pode melhorar o desempenho, reduzir a lat\303\252ncia e corrigir problemas de ru\303\255do no "
-   "\303\241udio. \303\211 necess\303\241rio ter instalado https://github.com/FeralInteractive/gamem"
-   "ode.",
 #ifdef HAVE_GAME_AI
    "Permite que uma IA jogue no seu lugar",
    "Substituir jogador 01",
@@ -8420,8 +8429,6 @@ static const struct
    "e no serial pode fazer o scanner colocar o conte\303\272do no sistema errado. Isso adiciona uma "
    "verifica\303\247\303\243o de CRC, que deixa a varredura bem mais lenta, mas pode ser mais precis"
    "a.",
-   "Verifica apenas um arquivo em vez de um diret\303\263rio. Selecione novamente o local do conte"
-   "\303\272do ap\303\263s alterar esta entrada.",
    "Os resultados s\303\243o adicionados a esta playlist. No caso de Auto - Qualquer, m\303\272ltipl"
    "as playlists de sistema podem ser atualizadas. Personalizado sem refer\303\252ncia de banco de d"
    "ados n\303\243o vincular\303\241 as entradas a nenhum banco de dados na playlist.",
@@ -8454,7 +8461,6 @@ static const struct
    "Mostre as configura\303\247\303\265es da \"Lat\303\252ncia\".",
    "Mostre as configura\303\247\303\265es do \"Registro de eventos\".",
    "Mostre as configura\303\247\303\265es da \"Rede\".",
-   "Mostre as configura\303\247\303\265es da \"Exibi\303\247\303\243o na tela\".",
    "Mostre as configura\303\247\303\265es da \"Listas de reprodu\303\247\303\243o\".",
    "Mostre as configura\303\247\303\265es do \"Gerenciamento de energia\".",
    "Mostre as configura\303\247\303\265es da \"Grava\303\247\303\243o\".",
@@ -9128,8 +9134,6 @@ static const struct
    "Falha ao conectar ao host.",
    "Falha em criar o diret\303\263rio.",
    "Falha ao entrar no GameMode",
-   "Falha ao entrar no GameMode: certifique-se de que o GameMode daemon est\303\241 instalado e em e"
-   "xecu\303\247\303\243o",
    "Falha em extrair o conte\303\272do do arquivo comprimido",
    "Falha em obter o apelido do cliente.",
    "Falha a\303\255 carregar.",
@@ -9518,7 +9522,7 @@ static const struct
  * compiler that pads this struct fails here instead of
  * misindexing at runtime. */
 typedef char msg_hash_pt_br_blob_check[
-      (sizeof(msg_hash_pt_br_blob) == (194337u
+      (sizeof(msg_hash_pt_br_blob) == (193613u
 #ifdef ANDROID
        + 352u
 #endif
@@ -10088,7 +10092,6 @@ static const msg_hash_id_t msg_hash_pt_br_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_FILE_BROWSER_SHADER,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_FILE_BROWSER_SHADER_PRESET,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_FILE_CONFIG,
-   (msg_hash_id_t)MENU_ENUM_LABEL_HELP_GAMEMODE_ENABLE,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_INPUT_ADC_TYPE,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_INPUT_DRIVER_LINUXRAW,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_INPUT_DRIVER_NO_DETAILS,
@@ -11410,6 +11413,7 @@ static const msg_hash_id_t msg_hash_pt_br_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_ASPECT_ADJUST_LANDSCAPE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_ASPECT_ADJUST_PORTRAIT,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_AUTOLOAD_PREFERRED,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_CONTACT_METHOD_BOTH,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_DIRECTORY,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_LIGHTGUN_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_MOUSE_SETTINGS,
@@ -11903,7 +11907,6 @@ static const msg_hash_id_t msg_hash_pt_br_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_METHOD_CUSTOM,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_OMIT_DB_REF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_SERIAL_AND_CRC,
-   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_SINGLE_FILE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_TARGET_PLAYLIST,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_TARGET_PLAYLIST_CUSTOM,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_THIS_DIRECTORY,
@@ -12221,6 +12224,8 @@ static const msg_hash_id_t msg_hash_pt_br_ids[] =
 #endif
 #endif
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DISABLE_COMPOSITION,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_PRESET_DEFAULT,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_STYLE_DEFAULT,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DRIVER,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DRIVER_FALLBACK,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_FILTER,
@@ -12273,8 +12278,16 @@ static const msg_hash_id_t msg_hash_pt_br_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_MESSAGE_POS_Y,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_MONITOR_INDEX,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_NOTCH_WRITE_OVER,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_PAUSE_ON,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_HIGH,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_LOW,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_MEDIUM,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_OFF,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SNAP_ANGLES_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_ALWAYS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_AUTO,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_ALWAYS,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_REFRESH_AUTO,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_FLIPPED,
@@ -12317,6 +12330,7 @@ static const msg_hash_id_t msg_hash_pt_br_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCALING_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCANLINE_SYNC,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCAN_SUBFRAMES,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCREEN_XR_SCALE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SHADERS_ENABLE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SHADER_DELAY,
@@ -12731,7 +12745,6 @@ static const msg_hash_id_t msg_hash_pt_br_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_FRAME_TIME_COUNTER_AUTO_RESET,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_FRAME_TIME_COUNTER_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_FRONTEND_LOG_LEVEL,
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_GAMEMODE_ENABLE_LINUX,
 #ifdef HAVE_GAME_AI
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_GAME_AI_MENU_OPTION,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_GAME_AI_OVERRIDE_P1,
@@ -13372,7 +13385,6 @@ static const msg_hash_id_t msg_hash_pt_br_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_METHOD,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_OMIT_DB_REF,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_SERIAL_AND_CRC,
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_SINGLE_FILE,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_TARGET_PLAYLIST,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_USE_DB,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_WITHOUT_CORE_MATCH,
@@ -13398,7 +13410,6 @@ static const msg_hash_id_t msg_hash_pt_br_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_LATENCY,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_LOGGING,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_NETWORK,
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_ONSCREEN_DISPLAY,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_PLAYLISTS,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_POWER_MANAGEMENT,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_RECORDING,
@@ -13885,7 +13896,6 @@ static const msg_hash_id_t msg_hash_pt_br_ids[] =
    (msg_hash_id_t)MSG_FAILED_TO_CONNECT_TO_HOST,
    (msg_hash_id_t)MSG_FAILED_TO_CREATE_THE_DIRECTORY,
    (msg_hash_id_t)MSG_FAILED_TO_ENTER_GAMEMODE,
-   (msg_hash_id_t)MSG_FAILED_TO_ENTER_GAMEMODE_LINUX,
    (msg_hash_id_t)MSG_FAILED_TO_EXTRACT_CONTENT_FROM_COMPRESSED_FILE,
    (msg_hash_id_t)MSG_FAILED_TO_GET_NICKNAME_FROM_CLIENT,
    (msg_hash_id_t)MSG_FAILED_TO_LOAD,

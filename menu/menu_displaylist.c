@@ -57,7 +57,7 @@
 #endif
 
 #ifdef HAVE_LAKKA
-#include "../../lakka.h"
+#include "../os/lakka/lakka.h"
 #endif
 
 #ifdef HAVE_LIBNX
@@ -65,7 +65,7 @@
 #endif
 
 #if defined(HAVE_LIBNX)
-#include "../../switch_performance_profiles.h"
+#include "../os/libnx/switch_performance_profiles.h"
 #endif
 
 #if defined(__linux__) || (defined(BSD) && !defined(__MACH__))
@@ -73,7 +73,7 @@
 #endif
 
 #if defined(ANDROID)
-#include "../play_feature_delivery/play_feature_delivery.h"
+#include "../os/android/play_feature_delivery.h"
 #endif
 
 #if TARGET_OS_IPHONE
@@ -123,7 +123,7 @@
 #include <file/file_watch.h>
 #include "../ui/ui_companion_driver.h"
 #include "../gfx/video_display_server.h"
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
 #include "../gfx/video_upscaler.h"
 #endif
 #ifdef HAVE_MODELINE
@@ -147,11 +147,12 @@
 #include "../runtime_file.h"
 #include "../manual_content_scan.h"
 #include "../core_backup.h"
-#include "../misc/cpufreq/cpufreq.h"
+#include "../os/lakka/cpufreq/cpufreq.h"
 #ifdef HAVE_LAKKA_SWITCH
-#include "../misc/reboot2payload/reboot2payload.h"
+#include "../os/lakka/reboot2payload/reboot2payload.h"
 #endif
 #include "../input/input_remapping.h"
+#include "../input/common/input_ignore_devices.h"
 
 #ifdef HAVE_MICROPHONE
 #include "../audio/microphone_driver.h"
@@ -583,7 +584,7 @@ static int filebrowser_parse(
          break;
       case FILEBROWSER_MANUAL_SCAN_DIR:
          menu_entries_prepend(info_list,
-               msg_hash_to_str(MENU_ENUM_LABEL_VALUE_SCAN_THIS_DIRECTORY),
+               msg_hash_to_str(MENU_ENUM_LABEL_VALUE_USE_THIS_DIRECTORY),
                MENU_ENUM_LABEL_SCAN_THIS_DIRECTORY_STR,
                MENU_ENUM_LABEL_SCAN_THIS_DIRECTORY,
                FILE_TYPE_MANUAL_SCAN_DIRECTORY, 0, 0);
@@ -643,8 +644,7 @@ static int filebrowser_parse(
          continue;
 
       dir_only_mode      = (   filebrowser_type == FILEBROWSER_SELECT_DIR
-                            || filebrowser_type == FILEBROWSER_SCAN_DIR
-                            || filebrowser_type == FILEBROWSER_MANUAL_SCAN_DIR);
+                            || filebrowser_type == FILEBROWSER_SCAN_DIR);
 
       if (dir_only_mode && attr != RARCH_DIRECTORY)
          continue;
@@ -711,7 +711,9 @@ static int filebrowser_parse(
       if (filebrowser_type == FILEBROWSER_SELECT_COLLECTION)
          file_type = FILE_TYPE_PLAYLIST_COLLECTION;
 
-      if (builtin_mediaplayer_enable || builtin_imageviewer_enable)
+      /* Content Location picks media files as scan content */
+      if (     (builtin_mediaplayer_enable || builtin_imageviewer_enable)
+            && filebrowser_type != FILEBROWSER_MANUAL_SCAN_DIR)
       {
          switch (path_type)
          {
@@ -2345,7 +2347,7 @@ static unsigned menu_displaylist_parse_display_info(file_list_t *list)
                0, 0, NULL))
             count++;
       }
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
       /* Whether the upscaler can be offered, and where its runtime is
        * looked for: the setting is hidden until both are found. */
       video_upscaler_status_string(pbuf, sizeof(pbuf));
@@ -3053,6 +3055,36 @@ static unsigned menu_displaylist_parse_input_info(file_list_t *list)
             count++;
       }
 #endif
+
+      /* A controller read twice - itself and another program's virtual
+       * one of it - only the user can tell: a row to leave this model
+       * out */
+      if (     (input_config_get_device_vid(port)
+               || input_config_get_device_pid(port))
+            && menu_entries_append(list,
+                  msg_hash_to_str(MENU_ENUM_LABEL_VALUE_PORT_IGNORE), "",
+                  MENU_ENUM_LABEL_INPUT_DEVICE_IGNORE,
+                  MENU_SETTINGS_CORE_INFO_NONE, 0, port, NULL))
+         count++;
+   }
+
+   /* The models left out, each a row to read it again; entry_idx is its
+    * place in the list */
+   {
+      uint16_t vid, pid;
+      unsigned n;
+      settings_t *settings = config_get_ptr();
+      for (n = 0; input_ignore_devices_at(
+               settings->arrays.input_ignore_devices, n, &vid, &pid); n++)
+      {
+         snprintf(entry, sizeof(entry),
+               msg_hash_to_str(MENU_ENUM_LABEL_VALUE_INPUT_IGNORED_DEVICE),
+               (unsigned)vid, (unsigned)pid);
+         if (menu_entries_append(list, entry, "",
+               MENU_ENUM_LABEL_INPUT_DEVICE_UNIGNORE,
+               MENU_SETTINGS_CORE_INFO_NONE, 0, n, NULL))
+            count++;
+      }
    }
 
 #ifdef HAVE_WINUSB_BIND
@@ -3062,6 +3094,12 @@ static unsigned menu_displaylist_parse_input_info(file_list_t *list)
          && menu_entries_append(list,
                msg_hash_to_str(MENU_ENUM_LABEL_VALUE_INPUT_GCA_ENABLE), "",
                MENU_ENUM_LABEL_INPUT_GCA_ENABLE,
+               MENU_SETTINGS_CORE_INFO_NONE, 0, 0, NULL))
+      count++;
+   if (     winusb_bind_xid_waiting()
+         && menu_entries_append(list,
+               msg_hash_to_str(MENU_ENUM_LABEL_VALUE_INPUT_XID_ENABLE), "",
+               MENU_ENUM_LABEL_INPUT_XID_ENABLE,
                MENU_SETTINGS_CORE_INFO_NONE, 0, 0, NULL))
       count++;
 #endif
@@ -3378,11 +3416,12 @@ static unsigned menu_displaylist_parse_system_info(file_list_t *list)
          CFStringRef bundleIdentifier = CFBundleGetIdentifier(mainBundle);
          if (bundleIdentifier)
          {
+            Boolean result;
             size_t _len    = strlcpy(entry,
                   msg_hash_to_str(MENU_ENUM_LABEL_VALUE_BUNDLE_IDENTIFIER),
                   sizeof(entry));
             _len          += strlcpy_lit(entry + _len, ": ", sizeof(entry) - _len);
-            Boolean result = CFStringGetCString(bundleIdentifier, entry + _len, sizeof(entry) - _len, kCFStringEncodingUTF8);
+            result         = CFStringGetCString(bundleIdentifier, entry + _len, sizeof(entry) - _len, kCFStringEncodingUTF8);
             if (result) {
                if (menu_entries_append(list, entry, "",
                            MENU_ENUM_LABEL_SYSTEM_INFO_ENTRY, MENU_SETTINGS_CORE_INFO_NONE,
@@ -3718,6 +3757,9 @@ static unsigned menu_displaylist_parse_system_info(file_list_t *list)
 #endif
 #ifdef HAVE_RZSTD
          {SUPPORTS_ZSTD, "Zstandard"},
+#endif
+#ifdef HAVE_RBZIP2
+         {SUPPORTS_BZIP2, "bzip2"},
 #endif
 #ifdef HAVE_RRAR
          {SUPPORTS_RAR, "RAR"},
@@ -8162,15 +8204,6 @@ static unsigned menu_displaylist_parse_manual_content_scan_list(
             false) == 0)
          count++;
 
-      if (*(manual_content_scan_get_search_recursively_ptr()) == false)
-      {
-         /* Scan only one file */
-         if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(info_list,
-               MENU_ENUM_LABEL_SCAN_SINGLE_FILE, PARSE_ONLY_BOOL,
-               false) == 0)
-            count++;
-      }
-
       /* Search inside archive files */
       if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(info_list,
             MENU_ENUM_LABEL_MANUAL_CONTENT_SCAN_SEARCH_ARCHIVES, PARSE_ONLY_BOOL,
@@ -9346,6 +9379,7 @@ unsigned menu_displaylist_build_list(
             {
                static const menu_displaylist_settings_row_t dl_rows_1[] = {
                   { MENU_ENUM_LABEL_INPUT_HOTKEY_BLOCK_DELAY, PARSE_ONLY_UINT, false },
+                  { MENU_ENUM_LABEL_INPUT_HOTKEY_TAP_DELAY, PARSE_ONLY_UINT, false },
                   { MENU_ENUM_LABEL_INPUT_HOTKEY_DEVICE_MERGE, PARSE_ONLY_BOOL, false },
                   { MENU_ENUM_LABEL_INPUT_HOTKEY_FOLLOWS_PLAYER1, PARSE_ONLY_BOOL, false },
                };
@@ -9366,7 +9400,8 @@ unsigned menu_displaylist_build_list(
 #ifndef HAVE_OPENXR
                else if (     key == RARCH_HEADSET_RECENTER
                           || key == RARCH_LASER_POINTER_TOGGLE
-                          || key == RARCH_HEADSET_VIEW_TOGGLE)
+                          || key == RARCH_HEADSET_VIEW_TOGGLE
+                          || key == RARCH_HEADSET_EDIT_SCREENS)
                   continue;
 #endif
                /* Show combo entries before normal binds */
@@ -10247,6 +10282,7 @@ unsigned menu_displaylist_build_list(
                {MENU_ENUM_LABEL_INPUT_STYLUS_ENABLE,                   PARSE_ONLY_BOOL,  true},
                {MENU_ENUM_LABEL_INPUT_STYLUS_REQUIRE_CONTACT_FOR_CLICK, PARSE_ONLY_BOOL, true},
                {MENU_ENUM_LABEL_INPUT_STYLUS_HOVER_MOVES_POINTER,      PARSE_ONLY_BOOL,  true},
+               {MENU_ENUM_LABEL_INPUT_STYLUS_HIDE_OVERLAY,             PARSE_ONLY_BOOL,  true},
                {MENU_ENUM_LABEL_INPUT_STYLUS_PRESSURE_SENSITIVITY,    PARSE_ONLY_UINT,   true},
                {MENU_ENUM_LABEL_INPUT_BLOCK_TIMEOUT,                   PARSE_ONLY_UINT,  true},
 #endif
@@ -11326,6 +11362,8 @@ unsigned menu_displaylist_build_list(
                {MENU_ENUM_LABEL_NETPLAY_CHAT_COLOR_NAME,            PARSE_ONLY_UINT,   true},
                {MENU_ENUM_LABEL_NETPLAY_CHAT_COLOR_MSG,             PARSE_ONLY_UINT,   true},
                {MENU_ENUM_LABEL_NETPLAY_ALLOW_PAUSING,              PARSE_ONLY_BOOL,   true},
+               {MENU_ENUM_LABEL_NETPLAY_ANALOG_JOYPADS,             PARSE_ONLY_BOOL,   true},
+               {MENU_ENUM_LABEL_NETPLAY_LOCKSTEP,                   PARSE_ONLY_BOOL,   true},
                {MENU_ENUM_LABEL_NETPLAY_ALLOW_SLAVES,               PARSE_ONLY_BOOL,   true},
                {MENU_ENUM_LABEL_NETPLAY_REQUIRE_SLAVES,             PARSE_ONLY_BOOL,   false},
                {MENU_ENUM_LABEL_NETPLAY_CHECK_FRAMES,               PARSE_ONLY_INT,    true},
@@ -12436,6 +12474,28 @@ unsigned menu_displaylist_build_list(
             }
          }
          break;
+#ifdef HAVE_TEMPORAL_UPSCALER
+      case DISPLAYLIST_VIDEO_DLSS_NR_SETTINGS_LIST:
+         if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
+                  MENU_ENUM_LABEL_VIDEO_DLSS_NR_ENABLE,
+                  PARSE_ONLY_BOOL, false) == 0)
+            count++;
+         if (settings->bools.video_dlss_nr_enable)
+         {
+            static const menu_displaylist_settings_row_t dl_rows_nr[] = {
+               { MENU_ENUM_LABEL_VIDEO_DLSS_NR_PRESET, PARSE_ONLY_UINT, false },
+               { MENU_ENUM_LABEL_VIDEO_DLSS_NR_STYLE, PARSE_ONLY_UINT, false },
+               { MENU_ENUM_LABEL_VIDEO_DLSS_NR_INTENSITY, PARSE_ONLY_UINT, false },
+               { MENU_ENUM_LABEL_VIDEO_DLSS_NR_LOCAL_STRUCTURE, PARSE_ONLY_UINT, false },
+               { MENU_ENUM_LABEL_VIDEO_DLSS_NR_LOCAL_TONE, PARSE_ONLY_UINT, false },
+               { MENU_ENUM_LABEL_VIDEO_DLSS_NR_SKIN_STRUCTURE, PARSE_ONLY_INT, false },
+               { MENU_ENUM_LABEL_VIDEO_DLSS_NR_AUTO_MASK, PARSE_ONLY_BOOL, false },
+            };
+            count += menu_displaylist_parse_settings_rows(list, settings,
+                  dl_rows_nr, (unsigned)ARRAY_SIZE(dl_rows_nr));
+         }
+         break;
+#endif
       case DISPLAYLIST_VIDEO_STEREO_SETTINGS_LIST:
 #ifdef HAVE_OPENXR
          /* A headset gives each eye its own image. */
@@ -12506,34 +12566,62 @@ unsigned menu_displaylist_build_list(
                      PARSE_ONLY_BOOL, false) == 0)
                count++;
 #endif
-            if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
-                     MENU_ENUM_LABEL_VIDEO_OPENXR_REFRESH_RATE,
-                     PARSE_ONLY_UINT, false) == 0)
-               count++;
-            if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
-                     MENU_ENUM_LABEL_VIDEO_OPENXR_PERF_BOOST,
-                     PARSE_ONLY_BOOL, false) == 0)
-               count++;
-            if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
-                     MENU_ENUM_LABEL_VIDEO_OPENXR_DISTANCE,
-                     PARSE_ONLY_FLOAT, false) == 0)
-               count++;
-            if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
-                     MENU_ENUM_LABEL_VIDEO_OPENXR_WIDTH,
-                     PARSE_ONLY_FLOAT, false) == 0)
-               count++;
-            if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
-                     MENU_ENUM_LABEL_VIDEO_OPENXR_PLACEMENT,
-                     PARSE_ONLY_UINT, false) == 0)
-               count++;
-            if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
-                     MENU_ENUM_LABEL_VIDEO_OPENXR_CONTROLLERS,
-                     PARSE_ONLY_UINT, false) == 0)
-               count++;
-            if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
-                     MENU_ENUM_LABEL_VIDEO_OPENXR_LASER,
-                     PARSE_ONLY_UINT, false) == 0)
-               count++;
+            /* Edit mode needs the headset's output and controllers. */
+#ifdef ANDROID
+            if (video_context_driver_headset_inline())
+#else
+            if (settings->bools.video_openxr_enable)
+#endif
+            {
+               static const menu_displaylist_settings_row_t edit_rows[] = {
+                  { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_EDIT, PARSE_ACTION, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_EDIT_SNAP, PARSE_ONLY_BOOL, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_EDIT_SNAP_ANGLES, PARSE_ONLY_UINT, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_EDIT_HINGE_GAP, PARSE_ONLY_UINT, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_EDIT_SMOOTHING, PARSE_ONLY_UINT, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_EDIT_PAUSE, PARSE_ONLY_BOOL, false },
+               };
+               count += menu_displaylist_parse_settings_rows(list, settings,
+                     edit_rows, (unsigned)ARRAY_SIZE(edit_rows));
+            }
+            {
+               static const menu_displaylist_settings_row_t headset_rows[] = {
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_REFRESH_RATE, PARSE_ONLY_UINT, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_PERF_BOOST, PARSE_ONLY_BOOL, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_CONTROLLERS, PARSE_ONLY_UINT, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_LASER, PARSE_ONLY_UINT, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_LASER_BEAM, PARSE_ONLY_UINT, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_PLACEMENT, PARSE_ONLY_UINT, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_DISTANCE, PARSE_ONLY_FLOAT, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_WIDTH, PARSE_ONLY_FLOAT, false },
+                  { MENU_ENUM_LABEL_VIDEO_OPENXR_MENU_FOLLOW, PARSE_ONLY_BOOL, false },
+               };
+               rarch_setting_t *screen = menu_setting_find_enum(
+                     MENU_ENUM_LABEL_VIDEO_SCREEN_SELECTED);
+               count += menu_displaylist_parse_settings_rows(list, settings,
+                     headset_rows, (unsigned)ARRAY_SIZE(headset_rows));
+               if (screen && screen->value.target.unsigned_integer)
+               {
+                  static const menu_displaylist_settings_row_t screen_rows[] = {
+                     { MENU_ENUM_LABEL_VIDEO_SCREEN_SELECTED, PARSE_ONLY_UINT, false },
+                     { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_VISIBLE, PARSE_ONLY_BOOL, false },
+                     { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_X, PARSE_ONLY_FLOAT, false },
+                     { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_Y, PARSE_ONLY_FLOAT, false },
+                     { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_Z, PARSE_ONLY_FLOAT, false },
+                     { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_YAW, PARSE_ONLY_FLOAT, false },
+                     { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_PITCH, PARSE_ONLY_FLOAT, false },
+                     { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_ROLL, PARSE_ONLY_FLOAT, false },
+                     { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_SCALE, PARSE_ONLY_FLOAT, false },
+                     { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_RESET, PARSE_ACTION, false },
+                  };
+                  count += menu_displaylist_parse_settings_rows(list, settings,
+                        screen_rows, (unsigned)ARRAY_SIZE(screen_rows));
+               }
+               if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
+                        MENU_ENUM_LABEL_VIDEO_SCREEN_XR_RESET_ALL,
+                        PARSE_ACTION, false) == 0)
+                  count++;
+            }
          }
 #endif
          break;
@@ -12605,7 +12693,7 @@ unsigned menu_displaylist_build_list(
                         MENU_ENUM_LABEL_VIDEO_VIEWPORT_BIAS_Y,
                         PARSE_ONLY_FLOAT, false) == 0)
                   count++;
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
                {
                   /* The drivers with a backend. The upscaler itself only
                    * with its runtimes found, and kept while on so it can
@@ -12630,6 +12718,17 @@ unsigned menu_displaylist_build_list(
                            if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
                                     MENU_ENUM_LABEL_VIDEO_TEMPORAL_UPSCALER_PRESET,
                                     PARSE_ONLY_UINT, false) == 0)
+                              count++;
+                        if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
+                                 MENU_ENUM_LABEL_VIDEO_TEMPORAL_UPSCALER_SHARPNESS,
+                                 PARSE_ONLY_UINT, false) == 0)
+                           count++;
+                        /* (DLSS 5's model, where its library is found) */
+                        if (     settings->uints.video_temporal_upscaler == VIDEO_TEMPORAL_UPSCALER_DLSS
+                              && video_upscaler_nr_available())
+                           if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
+                                    MENU_ENUM_LABEL_VIDEO_DLSS_NR_SETTINGS,
+                                    PARSE_ACTION, false) == 0)
                               count++;
                      }
                      if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
@@ -12934,6 +13033,9 @@ unsigned menu_displaylist_build_list(
                {MENU_ENUM_LABEL_INPUT_OVERLAY_SHOW_MOUSE_CURSOR,           PARSE_ONLY_BOOL,  false },
                {MENU_ENUM_LABEL_INPUT_OVERLAY_DPAD_DIAGONAL_SENSITIVITY,   PARSE_ONLY_UINT,  false },
                {MENU_ENUM_LABEL_INPUT_OVERLAY_ABXY_DIAGONAL_SENSITIVITY,   PARSE_ONLY_UINT,  false },
+               {MENU_ENUM_LABEL_INPUT_OVERLAY_DPAD_METHOD,                 PARSE_ONLY_UINT,  false },
+               {MENU_ENUM_LABEL_INPUT_OVERLAY_ABXY_METHOD,                 PARSE_ONLY_UINT,  false },
+               {MENU_ENUM_LABEL_INPUT_OVERLAY_CONTACT_SCALE,               PARSE_ONLY_UINT,  false },
                {MENU_ENUM_LABEL_INPUT_OVERLAY_ANALOG_RECENTER_ZONE,        PARSE_ONLY_UINT,  false },
                {MENU_ENUM_LABEL_INPUT_OVERLAY_AUTO_ROTATE,                 PARSE_ONLY_BOOL,  false },
                {MENU_ENUM_LABEL_INPUT_OVERLAY_AUTO_SCALE,                  PARSE_ONLY_BOOL,  false },
@@ -12999,6 +13101,24 @@ unsigned menu_displaylist_build_list(
                      build_list[i].checked = input_overlay_enable &&
                          BIT16_GET(menu_st->overlay_types, OVERLAY_TYPE_ABXY_AREA);
                      break;
+                  /* only Android's driver reports a finger's contact */
+#ifdef ANDROID
+                  case MENU_ENUM_LABEL_INPUT_OVERLAY_DPAD_METHOD:
+                     build_list[i].checked = input_overlay_enable &&
+                         BIT16_GET(menu_st->overlay_types, OVERLAY_TYPE_DPAD_AREA);
+                     break;
+                  case MENU_ENUM_LABEL_INPUT_OVERLAY_ABXY_METHOD:
+                     build_list[i].checked = input_overlay_enable &&
+                         BIT16_GET(menu_st->overlay_types, OVERLAY_TYPE_ABXY_AREA);
+                     break;
+                  case MENU_ENUM_LABEL_INPUT_OVERLAY_CONTACT_SCALE:
+                     build_list[i].checked = input_overlay_enable
+                        && (  (  BIT16_GET(menu_st->overlay_types, OVERLAY_TYPE_DPAD_AREA)
+                              && settings->uints.input_overlay_dpad_method)
+                           || (  BIT16_GET(menu_st->overlay_types, OVERLAY_TYPE_ABXY_AREA)
+                              && settings->uints.input_overlay_abxy_method));
+                     break;
+#endif
                   case MENU_ENUM_LABEL_INPUT_OVERLAY_ANALOG_RECENTER_ZONE:
                      build_list[i].checked = input_overlay_enable &&
                          (BIT16_GET(menu_st->overlay_types, OVERLAY_TYPE_ANALOG_LEFT)
@@ -14987,6 +15107,7 @@ static bool menu_displaylist_ctl_internal(
                   {MENU_ENUM_LABEL_NETPLAY_PASSWORD,           PARSE_ONLY_STRING, true},
                   {MENU_ENUM_LABEL_NETPLAY_SPECTATE_PASSWORD,  PARSE_ONLY_STRING, true},
                   {MENU_ENUM_LABEL_NETPLAY_ALLOW_PAUSING,      PARSE_ONLY_BOOL,   true},
+                  {MENU_ENUM_LABEL_NETPLAY_ANALOG_JOYPADS,     PARSE_ONLY_BOOL,   true},
                   {MENU_ENUM_LABEL_NETPLAY_ALLOW_SLAVES,       PARSE_ONLY_BOOL,   true},
                   {MENU_ENUM_LABEL_NETPLAY_REQUIRE_SLAVES,     PARSE_ONLY_BOOL,   false},
                   {MENU_ENUM_LABEL_NETPLAY_NAT_TRAVERSAL,      PARSE_ONLY_BOOL,   true},
@@ -17162,6 +17283,7 @@ static bool menu_displaylist_ctl_internal(
          case DISPLAYLIST_VIDEO_OUTPUT_SETTINGS_LIST:
          case DISPLAYLIST_VIDEO_HDR_SETTINGS_LIST:
          case DISPLAYLIST_VIDEO_STEREO_SETTINGS_LIST:
+         case DISPLAYLIST_VIDEO_DLSS_NR_SETTINGS_LIST:
          case DISPLAYLIST_VIDEO_SYNCHRONIZATION_SETTINGS_LIST:
          case DISPLAYLIST_VIDEO_SCALING_SETTINGS_LIST:
          case DISPLAYLIST_OPTIONS_DISK:

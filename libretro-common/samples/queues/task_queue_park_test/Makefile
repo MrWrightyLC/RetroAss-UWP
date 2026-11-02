@@ -5,15 +5,25 @@ TARGET := task_queue_park_test
 LIBRETRO_COMM_DIR := ../../..
 
 # Built with HAVE_THREADS: the threaded runner is what parks.  GCD=1
-# builds the GCD runner instead, against a libdispatch and blocks
-# runtime (DISPATCH_PREFIX for one outside the compiler's paths); off
-# Apple the QoS class is mapped onto a global queue priority.
+# builds the GCD runner instead: against libSystem on Apple, elsewhere
+# against a libdispatch and blocks runtime (DISPATCH_PREFIX for one
+# outside the compiler's paths), with the QoS class mapped onto a
+# global queue priority.
 SOURCES := \
 	task_queue_park_test.c \
 	$(LIBRETRO_COMM_DIR)/queues/task_queue.c \
 	$(LIBRETRO_COMM_DIR)/rthreads/rthreads.c \
+	$(LIBRETRO_COMM_DIR)/rthreads/retro_eventcount.c \
+	$(LIBRETRO_COMM_DIR)/compat/compat_strl.c \
 	$(LIBRETRO_COMM_DIR)/features/features_cpu.c \
 	$(LIBRETRO_COMM_DIR)/time/rtime.c
+
+# GCD=standin builds it against the stand-in in ../gcd_standin, a
+# libdispatch on rthreads, where there is none.
+ifeq ($(GCD),standin)
+   SOURCES += ../gcd_standin/dispatch_standin.c
+   CFLAGS  += -DHAVE_GCD -I../gcd_standin
+endif
 
 OBJS := $(call sample_objs,$(SOURCES:.c=.o))
 
@@ -32,12 +42,12 @@ endif
 
 ifeq ($(GCD),1)
    CFLAGS  += -fblocks -DHAVE_GCD
-   LIBS    += -ldispatch -lBlocksRuntime
    ifneq ($(DISPATCH_PREFIX),)
       CFLAGS  += -I$(DISPATCH_PREFIX)/include
       LDFLAGS += -L$(DISPATCH_PREFIX)/lib -Wl,-rpath,$(DISPATCH_PREFIX)/lib
    endif
    ifneq ($(shell uname -s),Darwin)
+      LIBS   += -ldispatch -lBlocksRuntime
       CFLAGS += -DQOS_CLASS_USER_INITIATED=DISPATCH_QUEUE_PRIORITY_HIGH
    endif
    # Under SANITIZER=thread against a libdispatch built without it, run

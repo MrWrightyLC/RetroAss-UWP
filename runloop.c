@@ -103,11 +103,11 @@
 
 #ifdef HAVE_LIBNX
 #include <switch.h>
-#include "switch_performance_profiles.h"
+#include "os/libnx/switch_performance_profiles.h"
 #endif
 
 #if defined(ANDROID)
-#include "play_feature_delivery/play_feature_delivery.h"
+#include "os/android/play_feature_delivery.h"
 #include "frontend/drivers/platform_unix.h"
 #include "input/drivers/android_input.h"
 #endif
@@ -223,7 +223,7 @@ bool android_get_vfs_authorized_locations(
 #include "gfx/video_thread_wrapper.h"
 #endif
 #include "gfx/video_display_server.h"
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
 #include "gfx/video_upscaler.h"
 #endif
 #ifdef HAVE_MODELINE
@@ -232,7 +232,7 @@ bool android_get_vfs_authorized_locations(
 #ifdef HAVE_BLUETOOTH
 #include "bluetooth/bluetooth_driver.h"
 #endif
-#include "misc/cpufreq/cpufreq.h"
+#include "os/lakka/cpufreq/cpufreq.h"
 #include "led/led_driver.h"
 #include "midi_driver.h"
 #include "location_driver.h"
@@ -264,7 +264,7 @@ bool android_get_vfs_authorized_locations(
 #endif
 
 #ifdef HAVE_LAKKA
-#include "lakka.h"
+#include "os/lakka/lakka.h"
 #endif
 
 #if TARGET_OS_IPHONE
@@ -1222,6 +1222,12 @@ static bool dynamic_verify_hw_context(
       size_t len = strlen(video_ident);
       switch (type)
       {
+#ifdef HAVE_GCM
+         case RETRO_HW_CONTEXT_RSX:
+            if (!(len == 3 && memcmp(video_ident, "rsx", 3) == 0))
+               return false;
+            break;
+#endif
          case RETRO_HW_CONTEXT_VULKAN:
             if (!(len == 6 && memcmp(video_ident, "vulkan", 6) == 0))
                return false;
@@ -1302,6 +1308,12 @@ static bool dynamic_request_hw_context(enum retro_hw_context_type type,
       case RETRO_HW_CONTEXT_NONE:
          RARCH_LOG("[HW] Requesting no HW context.\n");
          break;
+
+#ifdef HAVE_GCM
+      case RETRO_HW_CONTEXT_RSX:
+         RARCH_LOG("[HW] Requesting RSX context.\n");
+         break;
+#endif
 
       case RETRO_HW_CONTEXT_VULKAN:
 #ifdef HAVE_VULKAN
@@ -3802,9 +3814,10 @@ bool runloop_environment_cb(unsigned cmd, void *data)
 
       case RETRO_ENVIRONMENT_GET_HW_RENDER_UPSCALER_INTERFACE:
       {
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
          const struct retro_hw_render_upscaler_interface **iface =
             (const struct retro_hw_render_upscaler_interface **)data;
+         video_upscaler_note_wanted();
          if (iface && (*iface = video_upscaler_get_interface()))
             return true;
 #endif
@@ -4040,7 +4053,7 @@ bool runloop_environment_cb(unsigned cmd, void *data)
 
          if (midi_interface)
          {
-            midi_driver_request();
+            midi_driver_request(true);
             midi_interface->input_enabled  = midi_driver_input_enabled;
             midi_interface->output_enabled = midi_driver_output_enabled;
             midi_interface->read           = midi_driver_read;
@@ -5450,6 +5463,9 @@ static bool core_unload_game(void)
    runloop_state_t *runloop_st    = &runloop_state;
 
    video_driver_free_hw_context();
+#ifdef HAVE_TEMPORAL_UPSCALER
+   video_upscaler_clear_wanted();
+#endif
 
    /* The core owns the buffer the cache points at and is about to
     * close: wait out any reader before it goes. */
@@ -5476,7 +5492,15 @@ static bool core_unload_game(void)
       runloop_st->current_core.flags      &= ~RETRO_CORE_FLAG_GAME_LOADED;
    }
 
-   audio_driver_stop();
+   /* A staged switch keeps the device running until its driver stage
+    * sets it aside or closes it, so the menu's audio and its sounds
+    * keep playing between the stages: only the core's audio is ended,
+    * with the pause tail, and stays gated until the drivers are
+    * rebuilt. */
+   if (runloop_st->content_switching)
+      audio_driver_jump_fade_begin();
+   else
+      audio_driver_stop();
 
 #ifdef HAVE_MICROPHONE
    microphone_driver_stop();
@@ -5491,6 +5515,7 @@ static void runloop_reset_auto_state_load(runloop_state_t *runloop_st)
    runloop_st->auto_state_load_attempted = false;
    runloop_st->auto_state_load_ready     = false;
    runloop_st->auto_state_load_core_ran  = false;
+   runloop_st->auto_state_load_asked     = false;
 }
 
 static void runloop_apply_fastmotion_override(runloop_state_t *runloop_st,
@@ -5537,8 +5562,9 @@ static void runloop_apply_fastmotion_override(runloop_state_t *runloop_st,
             input_st->flags &= ~INP_FLAG_NONBLOCKING;
       }
 
+      /* Before audio blocks again, so the tail fits the room */
       if (!(runloop_st->flags & RUNLOOP_FLAG_FASTMOTION))
-         runloop_st->fastforward_after_frames = 1;
+         audio_driver_fastforward_end();
 
       driver_set_nonblock_state();
 
@@ -5588,13 +5614,15 @@ static void runloop_apply_fastmotion(bool enabled)
    {
       input_st->flags   &= ~INP_FLAG_NONBLOCKING;
       runloop_st->flags &= ~RUNLOOP_FLAG_FASTMOTION;
-      runloop_st->fastforward_after_frames = 1;
    }
 
    if (settings->bools.audio_fastforward_mute && enabled)
       AUDIO_FLAGS_SET(audio_st, AUDIO_FLAG_MUTED);
    else
       AUDIO_FLAGS_CLEAR(audio_st, AUDIO_FLAG_MUTED);
+
+   if (!enabled)
+      audio_driver_fastforward_end();
 
    driver_set_nonblock_state();
 
@@ -5708,6 +5736,7 @@ void runloop_event_deinit_core(void)
       input_driver_state_t *input_st = input_state_get_ptr();
       input_st->core_accel_rate      = 0;
       input_st->core_gyro_rate       = 0;
+      input_st->core_sub_sensors     = 0;
    }
 
    video_driver_cached_frame_retire();
@@ -5728,6 +5757,8 @@ void runloop_event_deinit_core(void)
     * follows to write that. */
    input_driver_flush_rumble();
    led_driver_flush();
+   /* After retro_deinit, which may still send its notes-off */
+   midi_driver_request(false);
 
    /* retro_deinit() may call
     * RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE
@@ -5950,34 +5981,30 @@ static bool event_init_content(
    /* Set entry slot from playlist entry if available */
    {
 #ifdef HAVE_MENU
-      playlist_t *playlist = playlist_get_cached();
+      playlist_t *playlist       = playlist_get_cached();
+      struct menu_state *menu_st = menu_state_get_ptr();
+      menu_handle_t *menu        = menu_st->driver_data;
 
-      if (playlist)
+      if (playlist && menu)
       {
-         struct menu_state *menu_st         = menu_state_get_ptr();
          const struct playlist_entry *entry = NULL;
 
-         if (menu_st && menu_st->driver_data)
-            playlist_get_index(playlist, menu_st->driver_data->rpl_entry_selection_ptr, &entry);
+         playlist_get_index(playlist, menu->rpl_entry_selection_ptr, &entry);
 
          if (entry && PLAYLIST_ENTRY_SLOT(entry) > 0)
             runloop_st->entry_state_slot = PLAYLIST_ENTRY_SLOT(entry);
 
          entry_state_load = runloop_st->entry_state_slot > -1;
+      }
 
-         /* Override entry slot in savestate run list */
-         {
-            menu_entry_t menu_entry;
-            MENU_ENTRY_INITIALIZE(menu_entry);
-            menu_entry.flags |= MENU_ENTRY_FLAG_LABEL_ENABLED;
-            menu_entry_get(&menu_entry, 0, 0, NULL, true);
-
-            if (string_is_equal(menu_entry.label, MENU_ENUM_LABEL_STATE_SLOT_RUN_STR))
-            {
-               runloop_st->entry_state_slot = menu_st->driver_data->state_slot_run;
-               entry_state_load = true;
-            }
-         }
+      /* The slot picked from the entry's Load State list, captured
+       * when the load was asked for: the menu has moved on since. */
+      if (menu && menu->state_slot_run_pending)
+      {
+         runloop_st->entry_state_slot      = menu->state_slot_run;
+         entry_state_load                  = menu->state_slot_run > -1;
+         runloop_st->auto_state_load_asked = menu->state_slot_run < 0;
+         menu->state_slot_run_pending      = false;
       }
 #endif
 
@@ -6018,7 +6045,8 @@ static bool event_init_content(
 #endif
       {
          if (     runloop_st->entry_state_slot < 0
-               && settings->bools.savestate_auto_load)
+               && (     settings->bools.savestate_auto_load
+                     || runloop_st->auto_state_load_asked))
             command_event_load_auto_state();
       }
    }
@@ -7991,6 +8019,7 @@ static enum runloop_state_enum runloop_check_state(
       if (input_st->overlay_ptr)
       {
          if (     settings->bools.input_stylus_enable
+               && settings->bools.input_stylus_hide_overlay
                && android_input_stylus_recently_active())
             input_st->overlay_ptr->flags |=  INPUT_OVERLAY_STYLUS_HIDDEN;
          else
@@ -8832,6 +8861,9 @@ static enum runloop_state_enum runloop_check_state(
 
    /* Check headset view hotkey */
    HOTKEY_CHECK(RARCH_HEADSET_VIEW_TOGGLE, CMD_EVENT_HEADSET_VIEW_TOGGLE, true, NULL);
+
+   /* Check headset edit hotkey: here, so it works in the menu too */
+   HOTKEY_CHECK(RARCH_HEADSET_EDIT_SCREENS, CMD_EVENT_HEADSET_EDIT_SCREENS, true, NULL);
 
    /* Check netplay host hotkey */
    HOTKEY_CHECK(RARCH_NETPLAY_HOST_TOGGLE, CMD_EVENT_NETPLAY_HOST_TOGGLE, true, NULL);
@@ -9712,7 +9744,6 @@ int runloop_iterate(void)
    bool core_paused                       = !!(runloop_st->flags & RUNLOOP_FLAG_PAUSED);
 #endif
    float slowmotion_ratio                 = settings->floats.slowmotion_ratio;
-   bool audio_sync                        = settings->bools.audio_sync;
    bool frame_advanced                    = false;
    bool savestate_automatic_enable        = settings->uints.savestate_automatic_interval > 0;
 
@@ -9990,7 +10021,7 @@ int runloop_iterate(void)
              * 'Display Rate': there the core runs on its own clock, its
              * audio does not block, and the menu takes the display's pace
              * below. */
-            else if (   audio_sync
+            else if (   settings->bools.audio_sync
                      && !(menu_rate & PACE_FACT_MENU_DISPLAY_RATE)
                      && runloop_is_libretro_running(runloop_st, menu_pause_libretro))
             {
@@ -10179,30 +10210,6 @@ int runloop_iterate(void)
 end:
    if (vrr_runloop_enable)
    {
-      /* Sync on video only, block audio later. */
-      if (runloop_st->fastforward_after_frames && audio_sync)
-      {
-         if (runloop_st->fastforward_after_frames == 1)
-         {
-            /* Nonblocking audio */
-            if (    (AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_ACTIVE)
-                 && (audio_st->context_audio_data))
-               audio_driver_set_nonblock_state(true);
-         }
-
-         runloop_st->fastforward_after_frames++;
-
-         if (runloop_st->fastforward_after_frames == 6)
-         {
-            /* Blocking audio */
-            if (     (AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_ACTIVE)
-                  && (audio_st->context_audio_data))
-               audio_driver_set_nonblock_state(audio_sync ? false : true);
-
-            runloop_st->fastforward_after_frames = 0;
-         }
-      }
-
       if (runloop_st->flags & RUNLOOP_FLAG_FASTMOTION)
          runloop_set_frame_limit(&video_st->av_info,
                runloop_get_fastforward_ratio(settings,
@@ -11030,7 +11037,8 @@ static void runloop_load_deferred_auto_state(void)
 
    settings = config_get_ptr();
 
-   if (!settings->bools.savestate_auto_load)
+   if (     !settings->bools.savestate_auto_load
+         && !runloop_st->auto_state_load_asked)
    {
       runloop_st->auto_state_load_pending   = false;
       runloop_st->auto_state_load_ready     = false;
@@ -11149,6 +11157,7 @@ bool core_run(void)
       if (runloop_st->auto_state_load_pending)
          runloop_st->auto_state_load_core_ran = true;
       audio_driver_frame_end();
+      recording_start_frame();
    }
 
 #ifdef HAVE_GAME_AI

@@ -43,6 +43,7 @@ static int test_release(test_viewer_t *v,unsigned x,unsigned y) { return ozone_p
 #include "../../../tasks/task_content.h"
 #include "../../../paths.h"
 #include "../../../frontend/frontend.h"
+#include "../../../driver.h"
 #include <time/rtime.h>
 #ifdef _WIN32
 #include "../../../gfx/common/win32_common.h"
@@ -126,6 +127,7 @@ static void render_subtitles(struct menu_state *menu_st)
 #include "folder_playback_test.h"
 #include "media_cadence_test.h"
 #include "wallpaper_pick_test.h"
+#include "history_image_test.h"
 #ifdef _WIN32
 static bool test_current_visible(struct menu_state *menu_st)
 {
@@ -168,6 +170,36 @@ static bool test_folder_shown(void *data)
 {
    return test_showing((test_viewer_t*)data);
 }
+static bool test_history_ready(void *data)
+{
+   return test_thumbnail((test_viewer_t*)data)->texture != 0;
+}
+static const char *test_history_image(void *data)
+{
+#if defined(TEST_MATERIALUI)
+   return ((test_viewer_t*)data)->browser_path;
+#else
+   (void)data;
+   return menu_state_get_ptr()->thumbnail_path_data->content_path;
+#endif
+}
+#if !defined(TEST_MATERIALUI) && !defined(TEST_XMB)
+/* Ozone's Images tab: a sidebar tab at depth 1 */
+static bool test_history_tab(void *data)
+{
+   test_viewer_t *v = (test_viewer_t*)data;
+   size_t i;
+   for (i = 0; i <= v->system_tab_end; i++)
+      if (v->tabs[i] == OZONE_SYSTEM_TAB_IMAGES)
+      {
+         ozone_sidebar_goto(v, i);
+         return true;
+      }
+   return false;
+}
+#else
+#define test_history_tab NULL
+#endif
 
 int main(int argc,char **argv)
 {
@@ -214,6 +246,19 @@ int main(int argc,char **argv)
    if(!native_gpu)
    { poke.load_texture=memory_texture;poke.unload_texture=memory_unload;video->poke=&poke; }
    config_get_ptr()->bools.menu_thumbnail_preview_audio = getenv("MEDIA_TEST_MODAL_MODE") != NULL;
+   if (getenv("MEDIA_TEST_HISTORY_IMAGE"))
+   {
+      fill_pathname_basedir(directory, argv[2], sizeof(directory));
+      CHECK("Images entry opens in the viewer and Back returns to the list",
+            media_history_image_check(menu_st, argv[1], directory,
+               test_folder_shown, test_history_ready, test_history_image,
+               test_history_tab,
+               render));
+      video->poke = old_poke;
+      main_exit(NULL);
+      printf("history image: %u failure(s)\n", failures);
+      return failures ? 1 : 0;
+   }
    if (getenv("MEDIA_TEST_WALLPAPER_PICK"))
    {
       CHECK("Background browser picks the image",
@@ -403,7 +448,7 @@ int main(int argc,char **argv)
    config_get_ptr()->uints.gfx_thumbnails=0;
    config_get_ptr()->uints.menu_left_thumbnails=0;
 #if defined(TEST_MATERIALUI)
-   materialui_browser_update(viewer,menu_st);
+   materialui_browser_update(viewer,menu_st,false);
    CHECK("browser thumbnail resolves in default list view",*viewer->browser_path);
 #endif
    CHECK("closed browser does not upload hidden video",uploads==0);
@@ -524,6 +569,28 @@ int main(int argc,char **argv)
    printf("texture seek: pending=%d paused=%d position_us=%ld ticks=%d\n",
          (int)seeking,(int)state.paused,(long)state.position_us,tick);
    CHECK("seek lands while user pause is preserved",!seeking&&state.paused&&state.position_us>0);
+   {
+      int64_t position = state.position_us;
+      bool restored = false;
+      driver_uninit(DRIVER_VIDEO_MASK, DRIVER_LIFETIME_RESET);
+      drivers_init(config_get_ptr(), DRIVER_VIDEO_MASK, DRIVER_LIFETIME_RESET, false);
+      viewer = (test_viewer_t*)menu_st->userdata;
+      old_poke = video->poke;
+      if (!native_gpu)
+         video->poke = &poke;
+      for (tick = 0; tick < 2000 && !restored; tick++)
+      {
+         render(menu_st);
+         restored = gfx_thumbnail_get_playback_state(test_thumbnail(viewer),
+               menu_st->current_time_us, &state)
+               && !state.seeking && state.paused
+               && state.position_us >= position - 100000
+               && state.position_us <= position + 100000;
+         if (!restored)
+            retro_sleep(1);
+      }
+      CHECK("video reinit preserves the paused movie position", restored);
+   }
    CHECK("Stop is consumed by the transport",test_action(viewer,MENU_ACTION_START)==MENU_ACTION_NOOP);
    seeking=true;
    for(tick=0;tick<2000&&seeking;tick++)

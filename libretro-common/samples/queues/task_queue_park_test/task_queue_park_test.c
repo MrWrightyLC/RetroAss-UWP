@@ -54,6 +54,8 @@ struct waiter
    retro_atomic_int_t ready;      /* what the handler waits for */
    retro_atomic_int_t passes;
    retro_atomic_int_t retired;
+   retro_time_t       last_pass;
+   unsigned           early_passes;
    retro_time_t       horizon;
    int                wake_inside;/* lost-wakeup lane: wake mid-pass */
 };
@@ -93,8 +95,10 @@ static void waiter_callback(retro_task_t *task, void *task_data,
    retro_atomic_fetch_add_int(&w->retired, 1);
 }
 
+/* (@wake_inside set before the push: the worker may run the first
+ * pass before the push returns) */
 static retro_task_t *push_waiter_with(struct waiter *w, retro_time_t horizon,
-      retro_task_handler_t handler)
+      retro_task_handler_t handler, int wake_inside)
 {
    retro_task_t *task = task_init();
    if (!task)
@@ -102,8 +106,10 @@ static retro_task_t *push_waiter_with(struct waiter *w, retro_time_t horizon,
    retro_atomic_int_init(&w->ready, 0);
    retro_atomic_int_init(&w->passes, 0);
    retro_atomic_int_init(&w->retired, 0);
+   w->last_pass    = 0;
+   w->early_passes = 0;
    w->horizon      = horizon;
-   w->wake_inside  = 0;
+   w->wake_inside  = wake_inside;
    w->child        = NULL;
    w->ident        = task->ident;
    task->handler   = handler;
@@ -116,7 +122,7 @@ static retro_task_t *push_waiter_with(struct waiter *w, retro_time_t horizon,
 
 static retro_task_t *push_waiter(struct waiter *w, retro_time_t horizon)
 {
-   return push_waiter_with(w, horizon, waiter_handler);
+   return push_waiter_with(w, horizon, waiter_handler, 0);
 }
 
 /* Checks until @w retires or the deadline; returns how long it took. */
@@ -188,8 +194,7 @@ static void lane_wake_inside_pass(void)
    unsigned      had = failures;
    retro_time_t  took;
 
-   CHECK(push_waiter(&w, LONG_HORIZON) != NULL, "push");
-   w.wake_inside = 1;
+   CHECK(push_waiter_with(&w, LONG_HORIZON, waiter_handler, 1) != NULL, "push");
    took = pump(&w);
 
    CHECK(retro_atomic_load_acquire_int(&w.retired) == 1,
@@ -252,7 +257,7 @@ static void lane_wake_from_child_callback(void)
    retro_task_t *task;
    retro_time_t  took;
 
-   CHECK((task = push_waiter_with(&w, LONG_HORIZON, parent_handler)) != NULL,
+   CHECK((task = push_waiter_with(&w, LONG_HORIZON, parent_handler, 0)) != NULL,
          "push");
    took = pump(&w);
 
@@ -344,31 +349,39 @@ static void lane_wait_counts_parked(void)
 
 /* -- the horizon is a watchdog -- */
 
+static void horizon_handler(retro_task_t *task)
+{
+   struct waiter *w  = (struct waiter*)task->user_data;
+   retro_time_t now = cpu_features_get_time_usec();
+   int passes       = retro_atomic_fetch_add_int(&w->passes, 1);
+
+   /* The threaded runner allows 500 us for context switching. */
+   if (passes && now - w->last_pass + 500 < w->horizon)
+      w->early_passes++;
+   w->last_pass = now;
+   if (passes == 2)
+      task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+   else
+      task_queue_park(task, w->horizon);
+}
+
 static void lane_horizon(void)
 {
    struct waiter w;
    unsigned      had = failures;
-   retro_time_t  start;
-   int           passes;
 
-   CHECK(push_waiter(&w, 50000) != NULL, "push");
-   start = cpu_features_get_time_usec();
-   while (cpu_features_get_time_usec() - start < 300000)
-   {
-      task_queue_check();
-      retro_sleep(1);
-   }
-   passes = retro_atomic_load_acquire_int(&w.passes);
-   /* 300 ms at 50 ms a park: about six passes; a spinning worker makes
-    * thousands, and one that never came back makes one. */
-   CHECK(passes >= 3 && passes <= 10,
-         "%d passes in 300 ms with a 50 ms horizon", passes);
-   retro_atomic_store_release_int(&w.ready, 1);
-   task_queue_wake(w.ident);
+   CHECK(push_waiter_with(&w, 50000, horizon_handler, 0) != NULL, "push");
    pump(&w);
-   CHECK(retro_atomic_load_acquire_int(&w.retired) == 1, "did not retire");
+   CHECK(retro_atomic_load_acquire_int(&w.retired) == 1,
+         "the horizon did not retire the task before the lane deadline");
+   if (!retro_atomic_load_acquire_int(&w.retired))
+      exit(EXIT_FAILURE);
+   CHECK(retro_atomic_load_acquire_int(&w.passes) == 3,
+         "the horizon handler did not run three times");
+   CHECK(w.early_passes == 0,
+         "%u passes ran before their 50 ms horizon", w.early_passes);
    if (failures == had)
-      fprintf(stderr, "[pass] horizon: %d passes in 300 ms\n", passes);
+      fprintf(stderr, "[pass] horizon: three passes, none before its deadline\n");
 }
 
 /* -- the queue going down with a task parked -- */

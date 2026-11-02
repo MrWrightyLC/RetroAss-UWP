@@ -105,7 +105,6 @@ static const struct
    char s_7607974d[14];
    char s_bdf1165f[21];
    char s_6a15d029[23];
-   char s_3817de39[346];
    char s_16ae54ac[284];
    char s_b3e89428[300];
    char s_7af11c30[116];
@@ -1375,6 +1374,7 @@ static const struct
    char s_e6e43c7d[38];
    char s_c1ddd207[38];
    char s_ded83500[45];
+   char s_69c06e41[11];
    char s_690802fe[20];
    char s_7895cc5b[22];
    char s_e46faa42[14];
@@ -1824,7 +1824,6 @@ static const struct
    char s_df763da7[7];
    char s_69dad0e6[54];
    char s_1532af95[49];
-   char s_03fb590d[22];
    char s_7c2f8b04[29];
    char s_fdbd73a3[30];
    char s_b443c25e[9];
@@ -2145,6 +2144,8 @@ static const struct
 #endif
 #endif
    char s_f4341e25[31];
+   char s_e09bad69[17];
+   char s_f66c7b67[17];
    char s_cc973e8a[7];
    char s_b9d37039[186];
    char s_d0a04fe4[15];
@@ -2197,8 +2198,16 @@ static const struct
    char s_4b582a0c[55];
    char s_61213f1d[18];
    char s_95e4b29f[79];
+   char s_fa462638[8];
+   char s_29f97e35[6];
+   char s_569b0627[9];
+   char s_99b1b2f6[9];
+   char s_569b11b0[3];
+   char s_328ddae3[3];
    char s_60258de0[7];
    char s_caf61308[12];
+   char s_5410e874[7];
+   char s_9eb59c3e[3];
    char s_34b2592a[3];
    char s_c7a27b20[12];
    char s_317b17ed[8];
@@ -2245,6 +2254,7 @@ static const struct
    char s_52e3d6ea[40];
    char s_2c868ae4[12];
    char s_9c535394[13];
+   char s_3253994e[12];
    char s_580e244f[5];
    char s_a9c8430e[14];
    char s_f5911f43[33];
@@ -2640,7 +2650,6 @@ static const struct
    char s_aa39aae6[65];
    char s_e531c55e[119];
    char s_deab66ee[94];
-   char s_5ce79fca[154];
 #ifdef HAVE_GAME_AI
    char s_b7dcc585[33];
    char s_328f4fd8[35];
@@ -3276,7 +3285,6 @@ static const struct
    char s_34a76adb[55];
    char s_88021a14[134];
    char s_fe1a9203[266];
-   char s_2222a23b[119];
    char s_8213bb32[115];
    char s_48462dac[374];
    char s_631de1a2[104];
@@ -3302,7 +3310,6 @@ static const struct
    char s_a55bf936[48];
    char s_c519f84d[45];
    char s_48aefa30[44];
-   char s_5d383a58[63];
    char s_dcf8bd8b[48];
    char s_bce9b94f[55];
    char s_d32f5a63[43];
@@ -3775,7 +3782,6 @@ static const struct
    char s_a363d07a[41];
    char s_9e5bd759[37];
    char s_8d7296ed[31];
-   char s_21580d7c[93];
    char s_fc5e1d2c[37];
    char s_51b22327[44];
    char s_2f6a6e51[23];
@@ -3959,6 +3965,7 @@ static const struct
    char s_8ab54d62[101];
    char s_aa554847[17];
    char s_ac2c797c[19];
+   char s_c52621db[6];
    char s_3fe94404[8];
    char s_80528b14[42];
    char s_eae21890[45];
@@ -4274,12 +4281,6 @@ static const struct
    "Shader f\303\241jl.",
    "Shader preset f\303\241jl.",
    "Konfigur\303\241ci\303\263s f\303\241jl.",
-   "A Linux GameMode enged\303\251lyez\303\251se seg\303\255thet a k\303\251sleltet\303\251sen, megj"
-   "av\303\255thatja a hang recseg\303\251s\303\251t \303\251s az \303\241ltal\303\241nos teljes\303"
-   "\255tm\303\251nyt maximaliz\303\241lhatja, a CPU \303\251s a GPU konfigur\303\241l\303\241s\303"
-   "\241val a legjobb teljes\303\255tm\303\251nyhez.\nA GameMode programot ehhez telep\303\255teni k"
-   "ell. A GameMode telep\303\255t\303\251si inform\303\241ci\303\263i: https://github.com/FeralInte"
-   "ractive/gamemode.",
    "A kiv\303\241lasztott anal\303\263g kart haszn\303\241lja az ir\303\241nyv\303\241lt\303\263 (D-"
    "Pad) bemenet\303\251hez. Ha a mag t\303\241mogatja az anal\303\263g bemenetet, ez a lek\303\251p"
    "ez\303\251s csak akkor akt\303\255v, ha \"(mindenk\303\251ppen)\" jel\305\261 be\303\241ll\303"
@@ -5826,6 +5827,7 @@ static const struct
    "R\303\241t\303\251t k\303\251par\303\241ny hangol\303\241s (fekv\305\221)",
    "R\303\241t\303\251t k\303\251par\303\241ny hangol\303\241s (\303\241ll\303\263)",
    "A prefer\303\241lt r\303\241t\303\251t automatikus bet\303\266lt\303\251se",
+   "Mindkett\305\221",
    "K\303\251perny\305\221r\303\241t\303\251tek",
    "R\303\241t\303\251t f\303\251nypisztoly",
    "R\303\241t\303\251t eg\303\251r",
@@ -6302,7 +6304,6 @@ static const struct
    "Egyedi",
    "Adatb\303\241zis hivatkoz\303\241s kihagy\303\241sa a j\303\241t\303\251klist\303\241b\303\263l",
    "CRC ellen\305\221rz\303\251s duplik\303\241lt azonos\303\255t\303\263k eset\303\251n",
-   "Egy f\303\241jl beolvas\303\241sa",
    "A friss\303\255tend\305\221 j\303\241t\303\251klista",
    "<Automatikus/a rendszer neve>",
    "<Egyedi>",
@@ -6625,6 +6626,8 @@ static const struct
 #endif
 #endif
    "Asztali composition letilt\303\241sa",
+   "Alap\303\251rtelmezett",
+   "Alap\303\251rtelmezett",
    "Vide\303\263",
    "A grafikus illeszt\305\221 nem kompatibilis a RetroArch jelenlegi vide\303\263illesz\305\221j"
    "\303\251vel, vissza\303\241ll\303\241s a %s illeszt\305\221re. Ind\303\255tsa \303\272jra a Retr"
@@ -6680,8 +6683,16 @@ static const struct
    "Monitor sorsz\303\241ma",
    "A teljes k\303\251perny\305\221 kiterjeszt\303\251se a bev\303\241g\303\241sra Android \303\251s"
    " iOS eszk\303\266z\303\266k\303\266n",
+   "Sz\303\274net",
+   "Magas",
+   "Alacsony",
+   "K\303\266zepes",
+   "Ki",
+   "Ki",
    "Mindig",
    "Automatikus",
+   "Mindig",
+   "Ki",
    "Ki",
    "Automatikus",
    "180 fok",
@@ -6729,6 +6740,7 @@ static const struct
    "G\303\266rd\303\274l\305\221 elektronsug\303\241r szimul\303\241l\303\241sa",
    "V\303\255zszintes",
    "F\303\274gg\305\221leges",
+   "M\303\251retez\303\251s",
    "K\303\251p",
    "Videoshaderek",
    "Automatikus shader k\303\251sleltet\303\251s",
@@ -7356,9 +7368,6 @@ static const struct
    " kapcsolva.",
    "A frontend napl\303\263 szintje. A be\303\241ll\303\255tott \303\251rt\303\251k alatti napl\303"
    "\263bejegyz\303\251sek nem jelennek meg.",
-   "Jav\303\255thatja a teljes\303\255tm\303\251nyt, cs\303\266kkentheti a k\303\251sleltet\303\251s"
-   "t \303\251s a recseg\305\221 hangot. Ez sz\303\274ks\303\251ges hozz\303\241: https://github.com"
-   "/FeralInteractive/gamemode.",
 #ifdef HAVE_GAME_AI
    "MI j\303\241t\303\251kos fel\303\274l\303\255r\303\241s alc\303\255m",
    "Az 1-es j\303\241t\303\251kos fel\303\274lb\303\255r\303\241lata",
@@ -8600,8 +8609,6 @@ static const struct
    "a PSP/PSN lemezekn\303\251l. Ilyenkor ha a beolvas\303\263 csak a sorozatsz\303\241mra hagyatkoz"
    "ik, rossz rendszert t\303\241rs\303\255that a tartalomhoz. A CRC ellen\305\221rz\303\251st bekap"
    "csolva a beolvas\303\241s j\303\263val lassabb, de pontosabb lehet.",
-   "Egy k\303\266nyvt\303\241r helyett csak egy f\303\241jl beolvas\303\241sa. V\303\241ltoztat\303"
-   "\241s ut\303\241n \303\272jra ki kell v\303\241lasztani a beolvas\303\241s hely\303\251t.",
    "Az eredm\303\251nyek ebbe a j\303\241t\303\251klist\303\241ba ker\303\274lnek. Automatikus - b"
    "\303\241rmely esetben t\303\266bb j\303\241t\303\251klista is friss\303\274lhet.",
    "Szigor\303\272 esetben csak az adatb\303\241zisban fellelt t\303\251telek ker\303\274lnek be. En"
@@ -8639,8 +8646,6 @@ static const struct
    "A k\303\251sleltet\303\251si be\303\241ll\303\255t\303\241sok jelenjenek meg.",
    "A napl\303\263z\303\241si be\303\241ll\303\255t\303\241sok jelenjenek meg.",
    "A h\303\241l\303\263zati be\303\241ll\303\255t\303\241sok jelenjenek meg.",
-   "A k\303\251perny\305\221n megjelen\305\221 elemek be\303\241ll\303\255t\303\241sai jelenjenek me"
-   "g.",
    "A j\303\241t\303\251klist\303\241k be\303\241ll\303\255t\303\241sai jelenjenek meg.",
    "Az energiagazd\303\241lkod\303\241s be\303\241ll\303\255t\303\241sai jelenjenek meg.",
    "A felv\303\251tel be\303\241ll\303\255t\303\241sai jelenjenek meg.",
@@ -9389,8 +9394,6 @@ static const struct
    "Kiszolg\303\241l\303\263hoz csatlakoz\303\241s sikertelen.",
    "K\303\266nyvt\303\241r l\303\251trehoz\303\241sa sikertelen.",
    "GameMode ind\303\255t\303\241sa sikertelen",
-   "GameMode ind\303\255t\303\241sa sikertelen - gy\305\221z\305\221dj\303\266n meg, hogy a GameMode"
-   " daemon fut/telep\303\255tve van",
    "Tartalom kit\303\266m\303\266r\303\255t\303\251se sikertelen",
    "Becen\303\251v fogad\303\241sa a klienst\305\221l sikertelen.",
    "Bet\303\266lt\303\251s sikertelen.",
@@ -9593,6 +9596,7 @@ static const struct
    "\251p let\303\266lt\303\251si opci\303\263 v\303\251gig volt pr\303\263b\303\241lva.",
    "Magok kihagyva: ",
    "Magok friss\303\255tve: ",
+   "Men\303\274",
    "Egyenes",
    "Nincs be\303\241ll\303\255tott billenty\305\261zet r\303\241t\303\251t.",
    "Nincs ment\303\251s. Fel\303\274lb\303\255r\303\241l\303\263 f\303\241jl akt\303\255v.",
@@ -9806,7 +9810,7 @@ static const struct
  * compiler that pads this struct fails here instead of
  * misindexing at runtime. */
 typedef char msg_hash_hu_blob_check[
-      (sizeof(msg_hash_hu_blob) == (187849u
+      (sizeof(msg_hash_hu_blob) == (187163u
 #ifdef ANDROID
        + 316u
 #endif
@@ -10344,7 +10348,6 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_FILE_BROWSER_SHADER,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_FILE_BROWSER_SHADER_PRESET,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_FILE_CONFIG,
-   (msg_hash_id_t)MENU_ENUM_LABEL_HELP_GAMEMODE_ENABLE,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_INPUT_ADC_TYPE,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_INPUT_DRIVER_LINUXRAW,
    (msg_hash_id_t)MENU_ENUM_LABEL_HELP_INPUT_DRIVER_NO_DETAILS,
@@ -11612,6 +11615,7 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_ASPECT_ADJUST_LANDSCAPE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_ASPECT_ADJUST_PORTRAIT,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_AUTOLOAD_PREFERRED,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_CONTACT_METHOD_BOTH,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_DIRECTORY,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_LIGHTGUN_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_OVERLAY_MOUSE_SETTINGS,
@@ -12060,7 +12064,6 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_METHOD_CUSTOM,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_OMIT_DB_REF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_SERIAL_AND_CRC,
-   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_SINGLE_FILE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_TARGET_PLAYLIST,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_TARGET_PLAYLIST_AUTO_ANY,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_SCAN_TARGET_PLAYLIST_CUSTOM,
@@ -12381,6 +12384,8 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
 #endif
 #endif
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DISABLE_COMPOSITION,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_PRESET_DEFAULT,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_STYLE_DEFAULT,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DRIVER,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_DRIVER_FALLBACK,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_FILTER,
@@ -12433,8 +12438,16 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_MESSAGE_POS_Y,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_MONITOR_INDEX,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_NOTCH_WRITE_OVER,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_PAUSE_ON,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_HIGH,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_LOW,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_MEDIUM,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_OFF,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SNAP_ANGLES_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_ALWAYS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_AUTO,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_ALWAYS,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_OFF,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_REFRESH_AUTO,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_ORIENTATION_FLIPPED,
@@ -12481,6 +12494,7 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCAN_SUBFRAMES,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCREEN_LAYOUT_HORIZONTAL,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCREEN_LAYOUT_VERTICAL,
+   (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SCREEN_XR_SCALE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SHADERS_ENABLE,
    (msg_hash_id_t)MENU_ENUM_LABEL_VALUE_VIDEO_SHADER_DELAY,
@@ -12874,7 +12888,6 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_FRAME_THROTTLE_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_FRAME_TIME_COUNTER_SETTINGS,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_FRONTEND_LOG_LEVEL,
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_GAMEMODE_ENABLE_LINUX,
 #ifdef HAVE_GAME_AI
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_GAME_AI_MENU_OPTION,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_GAME_AI_OVERRIDE_P1,
@@ -13510,7 +13523,6 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_METHOD,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_OMIT_DB_REF,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_SERIAL_AND_CRC,
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_SINGLE_FILE,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_TARGET_PLAYLIST,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_USE_DB,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SCAN_WITHOUT_CORE_MATCH,
@@ -13536,7 +13548,6 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_LATENCY,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_LOGGING,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_NETWORK,
-   (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_ONSCREEN_DISPLAY,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_PLAYLISTS,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_POWER_MANAGEMENT,
    (msg_hash_id_t)MENU_ENUM_SUBLABEL_SETTINGS_SHOW_RECORDING,
@@ -14009,7 +14020,6 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
    (msg_hash_id_t)MSG_FAILED_TO_CONNECT_TO_HOST,
    (msg_hash_id_t)MSG_FAILED_TO_CREATE_THE_DIRECTORY,
    (msg_hash_id_t)MSG_FAILED_TO_ENTER_GAMEMODE,
-   (msg_hash_id_t)MSG_FAILED_TO_ENTER_GAMEMODE_LINUX,
    (msg_hash_id_t)MSG_FAILED_TO_EXTRACT_CONTENT_FROM_COMPRESSED_FILE,
    (msg_hash_id_t)MSG_FAILED_TO_GET_NICKNAME_FROM_CLIENT,
    (msg_hash_id_t)MSG_FAILED_TO_LOAD,
@@ -14193,6 +14203,7 @@ static const msg_hash_id_t msg_hash_hu_ids[] =
    (msg_hash_id_t)MSG_NO_THUMBNAIL_DOWNLOAD_POSSIBLE,
    (msg_hash_id_t)MSG_NUM_CORES_LOCKED,
    (msg_hash_id_t)MSG_NUM_CORES_UPDATED,
+   (msg_hash_id_t)MSG_OPENXR_EDIT_TAG_MENU,
    (msg_hash_id_t)MSG_OPENXR_HEADSET_VIEW_FLAT,
    (msg_hash_id_t)MSG_OSK_OVERLAY_NOT_SET,
    (msg_hash_id_t)MSG_OVERRIDES_ACTIVE_NOT_SAVING,

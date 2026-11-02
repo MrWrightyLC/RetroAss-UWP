@@ -413,6 +413,9 @@ struct screenshot_result
     * task */
    const char *png_base64;
    size_t      png_base64_len;
+   /* the picture's size */
+   unsigned    width;
+   unsigned    height;
 };
 
 /* The largest PNG handed back to the callback */
@@ -426,6 +429,13 @@ bool take_screenshot_notify(
       const char *screenshot_dir,
       const char *path, bool silence,
       bool has_valid_framebuffer, bool fullpath, bool use_thread,
+      retro_task_callback_t cb, void *user_data);
+
+/* The frame on screen, scaled to fit @max_width by @max_height and never
+ * up, as a PNG for @cb alone: struct screenshot_result's png_base64,
+ * with an empty path. Nothing is written and nothing shown; always a
+ * task, so @cb runs on a later frame. */
+bool take_frame_notify(unsigned max_width, unsigned max_height,
       retro_task_callback_t cb, void *user_data);
 
 bool event_load_save_files(bool is_sram_load_disabled);
@@ -463,6 +473,9 @@ enum autoconfig_handle_flags
 
 void input_autoconfigure_blissbox_override_handler(
       int vid, int pid, char *device_name, size_t len);
+/* From a thread other than the main one, a connect or disconnect is
+ * handed to the main thread and returns true once it is queued; what
+ * it does is decided there. */
 bool input_autoconfigure_connect(
       const char *name,
       const char *display_name,

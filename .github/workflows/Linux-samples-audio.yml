@@ -554,7 +554,7 @@ jobs:
           # audio/drivers/rwebaudio.c against a stand-in for its
           # JavaScript half: frames of the layout the page took go out
           # one plane per channel, and every byte count is in frames of
-          # that layout. Then emscripten/library_rwebaudio.js itself
+          # that layout. Then os/emscripten/library_rwebaudio.js itself
           # under Node with a mock AudioContext: the destination is
           # widened only past stereo and only as far as its
           # maxChannelCount allows, and a stereo one is left as it was.
@@ -981,6 +981,30 @@ jobs:
              ./asio_ring_test
           echo "[pass] asio_ring_test (ASan)"
 
+      - name: Build and run asio_teardown_test (TSan, ASan, MinGW under wine)
+        shell: bash
+        working-directory: samples/audio/asio_teardown
+        run: |
+          set -eu
+          . "$GITHUB_WORKSPACE/.github/workflows/scripts/wine-server.sh"
+          # The ASIO teardown's wait for a callback still inside after
+          # ASIOStop, the driver's code pulled out of asio.c: it ends as
+          # the last callback leaves, never while one is inside, and at
+          # 200 ms for one that never leaves. A build whose last callback
+          # out does not notify must fail.
+          for san in thread address,undefined; do
+             make clean && make -j$(nproc) all SANITIZER=$san
+             timeout 60 ./asio_teardown_test
+          done
+          make clean && make -j$(nproc) all TEST_DEFINES=-DASIO_TEST_NO_OUT_NOTIFY
+          if timeout 60 ./asio_teardown_test; then
+             echo "negative build passed"; exit 1
+          fi
+          make clean && make -j$(nproc) all CC=x86_64-w64-mingw32-gcc LDFLAGS=-static
+          WINEDEBUG=-all timeout 120 make check CC=x86_64-w64-mingw32-gcc LDFLAGS=-static
+          make clean
+          echo "[pass] asio_teardown_test"
+
       - name: Build and run dsound_pump_test (MinGW, under wine)
         shell: bash
         working-directory: samples/audio/dsound_pump
@@ -1179,7 +1203,9 @@ jobs:
       - name: Build and run sinc kernel dispatch test (C89, ASan + UBSan)
         working-directory: samples/audio/sinc_dispatch
         run: |
-          # The SSE-only build must still pick SSE when AVX is requested.
+          # A baseline build carries the AVX and AVX-512 kernels through
+          # per-function targets and runs each one the runner supports
+          # against the scalar kernel; the -mavx build must agree.
           make -j$(nproc) check SANITIZER=address,undefined
           if grep -qw avx /proc/cpuinfo; then
             make clean
@@ -1287,6 +1313,9 @@ jobs:
           # holds it. With audio the only clock, rate control has to
           # leave the ratio alone, inline and threaded, and still hold
           # the fill when a present blocks behind the runloop's back.
+          # And neither leaving fast-forward nor resuming from a pause
+          # may hold the core while a queue plays out, threaded or
+          # inline (#19940).
           # Plain, not sanitized: it is the clock that is measured,
           # and a sanitizer's slowdown is a host that starves the
           # consumer whatever the cap does. Underruns with the cap are

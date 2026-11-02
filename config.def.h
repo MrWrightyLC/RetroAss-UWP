@@ -46,7 +46,7 @@
 /* Required for OpenDingux IPU filter + refresh
  * rate settings */
 #if defined(DINGUX)
-#include "dingux/dingux_utils.h"
+#include "os/dingux/dingux_utils.h"
 #endif
 
 /* Required for 'show inputs on overlay' setting */
@@ -1168,6 +1168,11 @@
 
 #define DEFAULT_OVERLAY_DPAD_DIAGONAL_SENSITIVITY 80
 #define DEFAULT_OVERLAY_ABXY_DIAGONAL_SENSITIVITY 50
+/* How the overlay's D-pad and face buttons read a touch: the way its
+ * centre lies (OVERLAY_CONTACT_METHOD_VECTOR), as they always have */
+#define DEFAULT_OVERLAY_DPAD_METHOD 0
+#define DEFAULT_OVERLAY_ABXY_METHOD 0
+#define DEFAULT_OVERLAY_CONTACT_SCALE 100
 
 #define DEFAULT_MENU_SWAP_OK_CANCEL_BUTTONS true
 #define DEFAULT_MENU_SWAP_SCROLL_BUTTONS false
@@ -1641,6 +1646,15 @@
 /* Allow players to pause */
 #define DEFAULT_NETPLAY_ALLOW_PAUSING false
 
+/* Sync both analog sticks of joypad ports. Clients older than
+ * netplay protocol 8 cannot join a host with this on. */
+#define DEFAULT_NETPLAY_ANALOG_JOYPADS true
+
+/* Wait for every player's input instead of guessing and rewinding.
+ * Cores whose states are too large or not deterministic enough to
+ * rewind on play lockstep whatever this says. */
+#define DEFAULT_NETPLAY_LOCKSTEP false
+
 /* Allow connections in slave mode */
 #define DEFAULT_NETPLAY_ALLOW_SLAVES true
 
@@ -1777,6 +1791,17 @@
 #define DEFAULT_VIDEO_TEMPORAL_UPSCALER 0
 #define DEFAULT_VIDEO_TEMPORAL_UPSCALER_QUALITY 0
 #define DEFAULT_VIDEO_TEMPORAL_UPSCALER_PRESET 0
+#define DEFAULT_VIDEO_TEMPORAL_UPSCALER_SHARPNESS 0
+/* DLSS Neural Rendering: off; the model's own defaults (skin structure
+ * -5 follows local structure) */
+#define DEFAULT_VIDEO_DLSS_NR_ENABLE false
+#define DEFAULT_VIDEO_DLSS_NR_PRESET 0
+#define DEFAULT_VIDEO_DLSS_NR_STYLE 0
+#define DEFAULT_VIDEO_DLSS_NR_INTENSITY 100
+#define DEFAULT_VIDEO_DLSS_NR_LOCAL_STRUCTURE 100
+#define DEFAULT_VIDEO_DLSS_NR_LOCAL_TONE 100
+#define DEFAULT_VIDEO_DLSS_NR_SKIN_STRUCTURE -5
+#define DEFAULT_VIDEO_DLSS_NR_AUTO_MASK true
 
 /* The menu runs at the display's refresh rate while content is loaded */
 #define DEFAULT_MENU_FRAME_RATE MENU_FRAME_RATE_DISPLAY
@@ -2025,6 +2050,8 @@
 #endif
 #define DEFAULT_INPUT_POLL_TYPE_BEHAVIOR 2
 #define DEFAULT_INPUT_HOTKEY_BLOCK_DELAY 5
+/* Off: the hotkey enabler reaches the game as it is pressed */
+#define DEFAULT_INPUT_HOTKEY_TAP_DELAY 0
 #define DEFAULT_INPUT_HOTKEY_DEVICE_MERGE false
 #define DEFAULT_INPUT_HOTKEY_FOLLOWS_PLAYER1 false
 
@@ -2145,7 +2172,7 @@
 
 /* Defines the strength of rumble effects
  * on OpenDingux devices */
-#if defined(DINGUX) && defined(HAVE_LIBSHAKE)
+#if defined(DINGUX) && defined(__linux__)
 #define DEFAULT_RUMBLE_GAIN 50
 #else
 #define DEFAULT_RUMBLE_GAIN 100

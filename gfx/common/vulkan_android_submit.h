@@ -19,8 +19,10 @@ typedef struct vulkan_android_submit_ops
    PFN_vkCmdBindDescriptorSets bind_sets;
    PFN_vkCmdPushConstants push;
    PFN_vkCmdDispatch dispatch;
-   /* The renderer supplies its existing queue-serialization wrapper. The
-    * helper must never submit directly to a queue shared with presentation. */
+   /* SUCCESS means submitted; NOT_READY means queued for the renderer's
+    * existing submission lock. TIMEOUT refuses without submitting or retaining
+    * pointers. A queued submission retains its frame until fence completion.
+    * The callback must copy submit data before returning NOT_READY. */
    VkResult (*submit)(void *context, VkQueue queue, uint32_t count,
          const VkSubmitInfo *submits, VkFence fence);
    void *submit_context;
@@ -48,7 +50,7 @@ typedef struct vulkan_android_submission
 } vulkan_android_submission_t;
 /* Cold metadata preparation for this cached entry. Resources/command/fence and
  * operation tables are already populated. Does not take source's image ticket.
- * Only known BT.709 SDR and BT.709/2020 PQ/HLG are currently supported. */
+ * Supports BT.709/SMPTE 170M SDR and BT.709/2020 PQ/HLG. */
 bool vulkan_android_submission_configure(vulkan_android_submission_t *entry,
       const android_frame_view_t *source, bool fp16);
 /* Renderer-owner zero-timeout query. 1 reusable; 0 pending; -1 sticky failure.

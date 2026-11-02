@@ -666,7 +666,7 @@ static void lane_device_registry(void)
       /* back to the pads and the mapping the other lanes expect */
       for (i = 0; i < MAX_USERS; i++)
          settings->uints.input_joypad_index[i] = i;
-         input_driver_deadzones_refresh();
+      input_driver_deadzones_refresh();
       input_driver_registry_restart();
       for (i = 0; i < 8; i++)
          input_autoconfigure_connect("Harness pad", NULL, NULL,
@@ -3111,10 +3111,10 @@ static bool combo_opens(unsigned pad, unsigned overlay)
    for (i = 0; i < 16; i++)
       if (pad & (1u << i))
          syn_buttons |= 1u << (input_autoconf_binds[0][i].joykey & 31);
-   BIT256_CLEAR_ALL(input_st->overlay_ptr->overlay_state.buttons);
+   BIT256_CLEAR_ALL(INPUT_OVERLAY_ST(input_st->overlay_ptr)->buttons);
    for (i = 0; i < 16; i++)
       if (overlay & (1u << i))
-         BIT256_SET(input_st->overlay_ptr->overlay_state.buttons, i);
+         BIT256_SET(INPUT_OVERLAY_ST(input_st->overlay_ptr)->buttons, i);
    /* a poll for the pad, then the system's input as the run loop
     * collects it, and the gate as the run loop applies it */
    input_driver_poll();
@@ -3182,12 +3182,12 @@ static void lane_menu_combo_gate(void)
       unsigned saved_combo = settings->uints.input_menu_toggle_gamepad_combo;
       settings->uints.input_menu_toggle_gamepad_combo = INPUT_COMBO_L3_R3;
       syn_buttons = 0;
-      BIT256_SET(ol.overlay_state.buttons, RETRO_DEVICE_ID_JOYPAD_L3);
-      BIT256_SET(ol.overlay_state.buttons, RETRO_DEVICE_ID_JOYPAD_R3);
+      BIT256_SET(INPUT_OVERLAY_ST(&ol)->buttons, RETRO_DEVICE_ID_JOYPAD_L3);
+      BIT256_SET(INPUT_OVERLAY_ST(&ol)->buttons, RETRO_DEVICE_ID_JOYPAD_R3);
       run_loop_frames(3);
       CHECK(!(menu_state_get_ptr()->flags & MENU_ST_FLAG_ALIVE),
             "menu combination: the run loop opened the menu for two overlay buttons");
-      BIT256_CLEAR_ALL(ol.overlay_state.buttons);
+      BIT256_CLEAR_ALL(INPUT_OVERLAY_ST(&ol)->buttons);
       run_loop_frames(2);
       settings->uints.input_menu_toggle_gamepad_combo = saved_combo;
    }
@@ -3297,6 +3297,155 @@ static void hf_press(uint32_t first, uint32_t then)
    run_loop_frames(2);
    syn_buttons = 0;
    run_loop_frames(3);
+}
+
+/* "Hotkey Enable Tap Delay": Select shares the enabler's button. A tap
+ * reaches the core on release for as long as it was held, a hold once
+ * the delay passes, and a hotkey keeps it from the core. */
+static unsigned et_select(void)
+{
+   return input_driver_state_wrapper(0, RETRO_DEVICE_JOYPAD, 0,
+         RETRO_DEVICE_ID_JOYPAD_SELECT) ? 1 : 0;
+}
+
+static unsigned et_select_mask(void)
+{
+   return (input_driver_state_wrapper(0, RETRO_DEVICE_JOYPAD, 0,
+         RETRO_DEVICE_ID_JOYPAD_MASK) >> RETRO_DEVICE_ID_JOYPAD_SELECT) & 1;
+}
+
+static void lane_enabler_tap(void)
+{
+#if defined(HAVE_TEST_DRIVERS) && !defined(_WIN32)
+   input_driver_state_t *input_st = input_state_get_ptr();
+   settings_t *settings           = config_get_ptr();
+   const input_device_driver_t *joypad_real = input_st->primary_joypad;
+   struct retro_keybind saved_pause = input_config_binds[0][RARCH_PAUSE_TOGGLE];
+   struct retro_keybind saved_en    = input_config_binds[0][RARCH_ENABLE_HOTKEY];
+   struct retro_keybind saved_sel   = input_config_binds[0][RETRO_DEVICE_ID_JOYPAD_SELECT];
+   struct retro_keybind saved_b     = input_config_binds[0][RETRO_DEVICE_ID_JOYPAD_B];
+   unsigned saved_delay             = settings->uints.input_hotkey_tap_delay;
+   const uint32_t pause_bit = 1u << 20, en_bit = 1u << 23, b_bit = 1u << 19;
+   unsigned had = failures, seen, i;
+   retro_time_t t0;
+   void *core;
+
+   if (   !(core = dlopen(core_path_g, RTLD_NOW))
+       || !(pm_runs = (long (*)(void))dlsym(core, "harness_core_runs"))
+       || !joypad_real)
+   {
+      CHECK(false, "enabler tap: the harness core's entry point or the joypad driver");
+      return;
+   }
+   syn_joypad               = *joypad_real;
+   syn_joypad.button        = syn_button;
+   syn_joypad.axis          = syn_axis;
+   syn_joypad.state         = syn_state;
+   syn_joypad.get_buttons   = syn_get_buttons;
+   input_st->primary_joypad = &syn_joypad;
+   syn_hat                  = 0;
+   syn_buttons              = 0;
+   memset(syn_axes, 0, sizeof(syn_axes));
+
+   input_config_binds[0][RARCH_PAUSE_TOGGLE].joykey            = 20;
+   input_config_binds[0][RARCH_ENABLE_HOTKEY].joykey           = 23;
+   input_config_binds[0][RETRO_DEVICE_ID_JOYPAD_SELECT].joykey = 23;
+   input_config_binds[0][RETRO_DEVICE_ID_JOYPAD_B].joykey      = 19;
+   binds_written_by_a_lane();
+
+   /* off: nothing armed */
+   settings->uints.input_hotkey_tap_delay = 0;
+   syn_buttons = en_bit;
+   run_loop_frames(3);
+   CHECK(!input_st->enabler_tap_active, "enabler tap: armed with the setting off");
+   syn_buttons = 0;
+   run_loop_frames(3);
+
+   settings->uints.input_hotkey_tap_delay = 1000;
+
+   /* a one-frame tap: kept while down, two frames on release */
+   syn_buttons = en_bit;
+   run_loop_frames(1);
+   CHECK(!et_select() && !et_select_mask(), "enabler tap: the game saw the enabler while down");
+   syn_buttons = 0;
+   seen = 0;
+   for (i = 0; i < 5; i++)
+   {
+      run_loop_frames(1);
+      seen += et_select();
+   }
+   CHECK(seen == 2, "enabler tap: a one-frame tap was not two frames of Select on release");
+
+   /* a four-frame tap: four frames on release, by mask too */
+   syn_buttons = en_bit;
+   run_loop_frames(4);
+   CHECK(!et_select(), "enabler tap: the game saw a held enabler before the delay");
+   syn_buttons = 0;
+   seen = 0;
+   for (i = 0; i < 8; i++)
+   {
+      run_loop_frames(1);
+      seen += et_select_mask();
+   }
+   CHECK(seen == 4, "enabler tap: a four-frame tap was not four frames of Select");
+
+   /* used for a hotkey: the game never sees it */
+   CHECK(!hf_paused(), "enabler tap: paused before the hotkey");
+   syn_buttons = en_bit;
+   run_loop_frames(2);
+   syn_buttons = en_bit | pause_bit;
+   run_loop_frames(2);
+   seen = et_select();
+   syn_buttons = 0;
+   for (i = 0; i < 4; i++)
+   {
+      run_loop_frames(1);
+      seen += et_select();
+   }
+   CHECK(seen == 0, "enabler tap: the game saw the enabler used for a hotkey");
+   CHECK(hf_paused(), "enabler tap: the hotkey did not pause");
+   hf_press(en_bit, pause_bit);
+   CHECK(!hf_paused(), "enabler tap: the hotkey did not unpause");
+
+   /* held past the delay: the game's, with its other buttons; then a
+    * hotkey takes it back at once */
+   settings->uints.input_hotkey_tap_delay = 20;
+   syn_buttons = en_bit;
+   t0 = cpu_features_get_time_usec();
+   while (cpu_features_get_time_usec() - t0 < 30000)
+   {
+      run_loop_frames(1);
+      retro_sleep(2);
+   }
+   run_loop_frames(2);
+   CHECK(et_select(), "enabler tap: held past the delay, the game did not see it");
+   syn_buttons = en_bit | b_bit;
+   run_loop_frames(2);
+   CHECK(input_driver_state_wrapper(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B),
+         "enabler tap: held past the delay, the game's other buttons were blocked");
+   syn_buttons = en_bit | pause_bit;
+   run_loop_frames(2);
+   CHECK(!et_select(), "enabler tap: a hotkey after the delay did not take it back");
+   syn_buttons = 0;
+   run_loop_frames(3);
+   CHECK(!et_select() && !input_st->enabler_tap_active,
+         "enabler tap: still armed after release");
+   if (hf_paused())
+      hf_press(en_bit, pause_bit);
+
+   settings->uints.input_hotkey_tap_delay = saved_delay;
+   input_config_binds[0][RARCH_PAUSE_TOGGLE]            = saved_pause;
+   input_config_binds[0][RARCH_ENABLE_HOTKEY]           = saved_en;
+   input_config_binds[0][RETRO_DEVICE_ID_JOYPAD_SELECT] = saved_sel;
+   input_config_binds[0][RETRO_DEVICE_ID_JOYPAD_B]      = saved_b;
+   binds_written_by_a_lane();
+   syn_buttons              = 0;
+   input_st->primary_joypad = joypad_real;
+   run_loop_frames(3);
+   if (failures == had)
+      fprintf(stderr, "[pass] enabler-tap lane (tap on release for as long as held,"
+            " hold after the delay, never with a hotkey)\n");
+#endif
 }
 
 static void lane_hotkey_facts(void)
@@ -7082,14 +7231,17 @@ static void lane_macro_modes(void)
    netplay_driver_ctl(RARCH_NETPLAY_CTL_ENABLE_SERVER, NULL);
    if (netplay_driver_ctl(RARCH_NETPLAY_CTL_IS_ENABLED, NULL))
    {
-      CHECK(!input_macro_start(1, 0) && !input_macro_playing(0),
-            "macro modes: a macro was started with netplay on");
+      run_loop_frames(10);
+      CHECK(input_macro_start(1, 0), "macro modes: with netplay on a macro does not start");
+      MM_PLAY(FRAMES);
+      mm_runs(seen, FRAMES, got, sizeof(got));
+      snprintf(why, sizeof(why), "macro modes: hosting netplay the core was given \"%s\", not \"" MM_SAID "\"", got);
+      CHECK(!strcmp(got, MM_SAID), why);
    }
    else
       printf("[skip] macro modes, netplay: could not be turned on here\n");
    netplay_driver_ctl(RARCH_NETPLAY_CTL_DISABLE, NULL);
-   CHECK(input_macro_start(1, 0), "macro modes: with netplay off again a macro does not start");
-   MM_PLAY(FRAMES);
+   run_loop_frames(10);
    }
 #endif
 #undef MM_PLAY
@@ -7106,8 +7258,7 @@ static void lane_macro_modes(void)
    if (failures == had)
       printf("[pass] macro modes: the core is given a macro as it is written when"
             " frames are stepped while paused, under run-ahead, while a replay is"
-            " recorded and when it is played back; with netplay on one is not"
-            " started\n");
+            " recorded and when it is played back, and hosting netplay\n");
 #endif
 }
 
@@ -8269,6 +8420,50 @@ static void lane_touchpad(void)
    syn_joypad.get_touchpad      = NULL;
    input_st->touchpad_requested[0] = false;
 
+   /* "Halves as Buttons": a click on each half is a RetroPad button of
+    * its own, both with a finger on each; nothing without the click */
+   {
+      bool remap_was = settings->bools.input_remap_binds_enable;
+#define HALF_READ(id) input_driver_state_wrapper(0, RETRO_DEVICE_JOYPAD, 0, (id))
+      settings->bools.input_remap_binds_enable = true;
+      settings->uints.input_touchpad[0]        = INPUT_TOUCHPAD_HALVES;
+      settings->uints.input_touchpad_left[0]   = RETRO_DEVICE_ID_JOYPAD_SELECT;
+      settings->uints.input_touchpad_right[0]  = RETRO_DEVICE_ID_JOYPAD_START;
+      input_config_binds_changed();
+      touch_lent.touch_down = 0;
+      touch_finger(0, true, -9000, 0);
+      run_loop_frames(1);
+      CHECK(!HALF_READ(RETRO_DEVICE_ID_JOYPAD_SELECT) && !HALF_READ(RETRO_DEVICE_ID_JOYPAD_START),
+            "touchpad halves: a finger on the pad, not pressed in, pressed a button");
+      touch_lent.touch_down |= INPUT_PAD_TOUCH_PRESS;
+      run_loop_frames(1);
+      CHECK(HALF_READ(RETRO_DEVICE_ID_JOYPAD_SELECT) && !HALF_READ(RETRO_DEVICE_ID_JOYPAD_START),
+            "touchpad halves: the left half pressed in is not the left half's button alone");
+      touch_finger(0, true, 9000, 0);
+      run_loop_frames(1);
+      CHECK(!HALF_READ(RETRO_DEVICE_ID_JOYPAD_SELECT) && HALF_READ(RETRO_DEVICE_ID_JOYPAD_START),
+            "touchpad halves: the right half pressed in is not the right half's button alone");
+      touch_finger(1, true, -9000, 0);
+      run_loop_frames(1);
+      CHECK(HALF_READ(RETRO_DEVICE_ID_JOYPAD_SELECT) && HALF_READ(RETRO_DEVICE_ID_JOYPAD_START),
+            "touchpad halves: a finger on each half pressed in is not both buttons");
+      settings->uints.input_touchpad_left[0] = RETRO_DEVICE_ID_JOYPAD_A;
+      input_config_binds_changed();
+      run_loop_frames(1);
+      CHECK(HALF_READ(RETRO_DEVICE_ID_JOYPAD_A) && !HALF_READ(RETRO_DEVICE_ID_JOYPAD_SELECT),
+            "touchpad halves: the left half's button set to A is not A");
+      TOUCH_READ();
+      CHECK(!pd0 && !mx && !ml, "touchpad halves: the pad was also the pointer or the mouse");
+      settings->uints.input_touchpad[0] = INPUT_TOUCHPAD_POINTER;
+      input_config_binds_changed();
+      run_loop_frames(1);
+      CHECK(!HALF_READ(RETRO_DEVICE_ID_JOYPAD_A) && !HALF_READ(RETRO_DEVICE_ID_JOYPAD_START),
+            "touchpad halves: in another mode the halves still pressed buttons");
+      settings->uints.input_touchpad_left[0]   = RETRO_DEVICE_ID_JOYPAD_SELECT;
+      settings->bools.input_remap_binds_enable = remap_was;
+#undef HALF_READ
+   }
+
    touch_lent.touch_down = 0;
    settings->uints.input_touchpad[0] = INPUT_TOUCHPAD_POINTER;
    fast_forward(false);
@@ -8282,7 +8477,9 @@ static void lane_touchpad(void)
             " moves once a poll, small ones added up, and a press a left or"
             " with two fingers a right click; off or without one, nothing;"
             " as RETRO_DEVICE_TOUCHPAD, the fingers down in order, lent or"
-            " copied once a poll, and the port's mapping off once read\n");
+            " copied once a poll, and the port's mapping off once read; as"
+            " halves, a click on each half its own button, both with a finger"
+            " on each\n");
 #else
    printf("[skip] touchpad: needs the test drivers\n");
 #endif
@@ -8466,6 +8663,19 @@ static void lane_hw_context_restart(void)
    video_driver_state_t *video_st = video_state_get_ptr();
    unsigned had                   = failures;
    bool before, after;
+#if defined(HAVE_OPENGL)
+   video_driver_t saved_driver;
+#ifdef HAVE_OPENGL_CORE
+   video_driver_t *hw_driver = &video_gl3;
+#else
+   video_driver_t *hw_driver = &video_gl2;
+#endif
+
+   /* Exercise the restart bookkeeping without opening a GPU context. */
+   saved_driver      = *hw_driver;
+   *hw_driver        = video_null;
+   hw_driver->ident  = saved_driver.ident;
+#endif
 
    /* what RETRO_ENVIRONMENT_SET_HW_RENDER leaves behind */
    memset(&video_st->hw_render, 0, sizeof(video_st->hw_render));
@@ -8489,14 +8699,22 @@ static void lane_hw_context_restart(void)
          "hw restart: after a driver restart the frontend no longer knows the core renders with the GPU");
    CHECK(hw_lane_destroys == 1,
          "hw restart: the core's context was not destroyed exactly once");
+   CHECK(hw_lane_resets == 1,
+         "hw restart: the core's context was not reset exactly once");
 
    /* as the lanes after this found it */
    memset(&video_st->hw_render, 0, sizeof(video_st->hw_render));
    retro_atomic_store_release_int(&video_st->hw_context_type,
          (int)RETRO_HW_CONTEXT_NONE);
+   video_driver_restore_cached(config_get_ptr());
    command_event(CMD_EVENT_REINIT, NULL);
    run_loop_frames(2);
+   CHECK(video_st->current_video == &video_null,
+         "hw restart: the forced GPU driver leaked into the next lane");
 
+#if defined(HAVE_OPENGL)
+   *hw_driver = saved_driver;
+#endif
    if (failures == had)
       printf("[pass] hw restart: across a driver restart a GPU-rendering"
             " core's request comes back, its context is destroyed once"
@@ -9515,6 +9733,8 @@ int main(int argc, char *argv[])
    unsigned    load_poll     = POLL_TYPE_LATE;
    (void)argc;
 
+   setvbuf(stdout, NULL, _IOLBF, 0);
+
    if (load_poll_env)
    {
       for (load_poll = 0; load_poll < 3; load_poll++)
@@ -9696,6 +9916,7 @@ int main(int argc, char *argv[])
       lane_menu_pause();
       lane_gun_buttons_kept_mice();
       lane_hotkey_facts();
+      lane_enabler_tap();
       lane_ai_presses();
       lane_menu_repeat_rates();
       lane_pointer_store();

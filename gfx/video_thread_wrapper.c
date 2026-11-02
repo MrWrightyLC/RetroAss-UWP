@@ -1978,8 +1978,15 @@ static void video_thread_async_run(thread_video_t *thr)
          enum video_texture_update r = VIDEO_TEXTURE_UPDATE_REFUSED;
          uintptr_t id                = n->handle;
          if (driver_data && poke && poke->import_texture)
-            r = poke->import_texture(driver_data, &id,
-                  (const video_frame_import_t*)n->img, n->filter);
+         {
+            r = VIDEO_TEXTURE_UPDATE_DONE;
+            if (id && poke->prepare_import_texture)
+               r = poke->prepare_import_texture(driver_data, id,
+                     (const video_frame_import_t*)n->img);
+            if (r == VIDEO_TEXTURE_UPDATE_DONE)
+               r = poke->import_texture(driver_data, &id,
+                     (const video_frame_import_t*)n->img, n->filter);
+         }
          n->made    = (!n->handle && id && r != VIDEO_TEXTURE_UPDATE_REFUSED);
          n->dropped = (r == VIDEO_TEXTURE_UPDATE_DROPPED);
          n->handle  = (r == VIDEO_TEXTURE_UPDATE_REFUSED) ? 0 : id;
@@ -2014,6 +2021,13 @@ static void video_thread_async_run(thread_video_t *thr)
          else
             GFX_INSTR_INC(n->dropped ? GFX_INSTR_TEX_UPDATE_DROPPED
                   : GFX_INSTR_TEX_UPDATE);
+      }
+      else if (n->kind == VIDEO_THREAD_ASYNC_JOB)
+      {
+         const video_thread_async_job_t *job
+               = (const video_thread_async_job_t *)n->img;
+         n->handle = job && job->run
+               ? job->run(driver_data, poke, job->user) : 0;
       }
       else
       {
@@ -2929,13 +2943,16 @@ static void video_thread_loop(void *data)
 #endif
 #ifdef HAVE_GFX_WIDGETS
                /* This thread draws the widgets, so it advances and lays
-                * them out too, before the driver's frame asks whether
-                * any are visible - where the runloop does it without
-                * the wrapper */
+                * them out too, then answers whether any are visible -
+                * where the runloop does both without the wrapper */
                if (video_info->widgets_active)
+               {
                   gfx_widgets_worker_step(video_info,
                         thr->frame.slot[slot].status_text,
                         thr->frame.slot[slot].status_text_len);
+                  video_info->widgets_visible =
+                        gfx_widgets_visible(video_info);
+               }
 #endif
                if (thr->frame.slot[slot].hw_slot >= 0)
                {
@@ -3717,7 +3734,12 @@ static VIDEO_NOINLINE void video_thread_pace_hold(thread_video_t *thr,
          drained            = true;
          thr->handoff.drains++;
       }
-      if (thr->content_due < next)
+      /* Not before the display's next vblank. A grid laid from the
+       * video thread's clock is only its last completion plus a
+       * period, late whenever that thread was: clamped to it, the
+       * schedule lost that lateness every frame on a busy machine. */
+      if (     thr->content_due < next
+            && (snap.flags & VIDEO_THREAD_STAT_F_PHASE_DISPLAY))
          thr->content_due = next;
       /* The vblank nearest the due time, not the first at or after it:
        * the due time accumulates in the content's period and the grid
@@ -3854,7 +3876,12 @@ static VIDEO_NOINLINE bool video_thread_frame_replay(thread_video_t *thr,
 
    thread_update_driver_state(thr);
    if (video_info)
+   {
       video_info->swap_count = thr->video_st->swap_count;
+#ifdef HAVE_GFX_WIDGETS
+      video_info->widgets_visible = gfx_widgets_visible(video_info);
+#endif
+   }
 
    if (thr->driver_data && thr->driver && thr->driver->frame)
    {
@@ -4353,10 +4380,10 @@ static bool video_thread_frame(void *data, const void *frame_,
 
    video_thread_pace_hold(thr, now, video_info->driver_pacing_id != 0);
 
-   /* One GL context: the video thread's turn with it - the present of
-    * what was just pushed - comes between the release above and this. */
+   /* One GL context: the publish handed it to the video thread with
+    * the frame; taken back once that pass is done with it. */
    if (ctx_held)
-      video_thread_hw_ctx_retake(thr);
+      video_thread_hw_ctx_take(thr, false);
 
    thr->last_time = cpu_features_get_time_usec();
    thr->run_start = thr->last_time;

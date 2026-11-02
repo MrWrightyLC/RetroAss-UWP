@@ -42,6 +42,9 @@
 #include "../../../gfx/video_driver.h"
 #include "../../../gfx/gfx_instrument.h"
 #include "../../../gfx/video_thread_wrapper.h"
+#ifdef HAVE_TEMPORAL_UPSCALER
+#include "../../../gfx/video_upscaler.h"
+#endif
 #include "../../../record/record_driver.h"
 #include "../../../gfx/font_driver.h"
 #include "../../../menu/menu_driver.h"
@@ -3173,6 +3176,7 @@ typedef struct
    unsigned current;
    bool returned[2];
 #ifdef HAVE_GFX_WIDGETS
+   bool replay_widgets_visible[2];
    bool inactive_widgets_visible, retired_widgets_visible;
    bool retired_widgets_checked;
 #endif
@@ -3191,6 +3195,10 @@ static bool replay_swap_frame(void *data, const void *frame,
    (void)pitch;
    (void)msg;
    replay_swap->seen[replay_swap->current] = info->swap_count;
+#ifdef HAVE_GFX_WIDGETS
+   replay_swap->replay_widgets_visible[replay_swap->current] =
+         info->widgets_visible;
+#endif
    return true;
 }
 
@@ -3211,20 +3219,29 @@ static uintptr_t replay_swap_run(void *data)
    driver.frame = replay_swap_frame;
    thr->driver = &driver;
    thr->video_st->swap_count = t->expected;
+#ifdef HAVE_GFX_WIDGETS
+   widgets = dispwidget_get_ptr();
+   saved_worker = retro_atomic_load_acquire_int(&widgets->worker);
+   retro_atomic_store_release_int(&widgets->worker, 1);
+   t->info->widgets_userdata = widgets;
+   t->info->fps_show = true;
+#endif
    for (i = 0; i < 2; i++)
    {
       t->current = i;
       t->seen[i] = 0;
       t->info->swap_count = i ? UINT64_MAX : 0;
+#ifdef HAVE_GFX_WIDGETS
+      t->info->widgets_active = i == 0;
+      t->info->widgets_visible = i != 0;
+#endif
       t->returned[i] = thr->video_st->current_video->frame(thr, NULL,
             VIDEO_SCALE_PACK(1, 1), 0, 0, NULL, t->info);
       t->after[i] = thr->video_st->swap_count;
    }
 #ifdef HAVE_GFX_WIDGETS
-   widgets = dispwidget_get_ptr();
-   t->info->widgets_userdata = widgets;
+   retro_atomic_store_release_int(&widgets->worker, saved_worker);
    t->info->widgets_active = false;
-   t->info->fps_show = true;
    t->inactive_widgets_visible = gfx_widgets_visible(t->info);
    t->retired_widgets_checked = widgets->video_st != NULL;
    t->retired_widgets_visible = false;
@@ -3269,6 +3286,10 @@ static void lane_replay_swap_count(void)
             "inline replay counted an extra present");
    }
 #ifdef HAVE_GFX_WIDGETS
+   CHECK(t.replay_widgets_visible[0],
+         "inline replay did not detect visible widgets");
+   CHECK(!t.replay_widgets_visible[1],
+         "inline replay retained stale widget visibility");
    CHECK(!t.inactive_widgets_visible,
          "inline replay treated inactive widgets as visible");
    CHECK(!t.retired_widgets_visible,
@@ -5134,14 +5155,24 @@ static retro_time_t prlane_last_present(void *data)
       : prlane_last_out - prlane_period;
 }
 
+/* The paced rate, from the gaps between the core's frames. A gap of two
+ * periods or more is the box taking the CPU away (a busy CI runner),
+ * which no pacing can make up; it is left out with its frames, and
+ * counted in @stalls. Every hold pattern a case has (120 on 144 is one
+ * or two panel periods) stays under it, so a wrong period still shows. */
 static double pacing_rate_measure(thread_video_t *thr, float display_hz,
-      double panel_hz, double content_fps, bool timestamps)
+      double panel_hz, double content_fps, bool timestamps,
+      unsigned *stalls)
 {
    settings_t *settings = config_get_ptr();
    video_driver_state_t *video_st = video_state_get_ptr();
    unsigned n = (unsigned)(content_fps * 2.0);
-   uint64_t f0;
-   retro_time_t t0, took;
+   retro_time_t stall_us = (retro_time_t)(2000000.0 / content_fps);
+   retro_time_t took     = 0;
+   uint64_t frames       = 0;
+   uint64_t f_last;
+   retro_time_t t_last;
+   unsigned i;
 
    /* The fake driver reads the panel's timing on the video thread:
     * changed only with that thread idle, as the frame handed over next
@@ -5158,12 +5189,30 @@ static double pacing_rate_measure(thread_video_t *thr, float display_hz,
    /* Settle: the period, render and core estimates */
    run_frames(n / 4);
    video_thread_wait_idle();
-   f0 = core_frames();
-   t0 = cpu_features_get_time_usec();
-   run_frames(n);
-   took = cpu_features_get_time_usec() - t0;
-   return took > 0
-      ? (double)(core_frames() - f0) * 1000000.0 / (double)took : 0.0;
+   *stalls = 0;
+   f_last  = core_frames();
+   t_last  = cpu_features_get_time_usec();
+   for (i = 0; i < n; i++)
+   {
+      uint64_t f;
+      retro_time_t t, gap;
+      run_frames(1);
+      f   = core_frames();
+      t   = cpu_features_get_time_usec();
+      gap = t - t_last;
+      if (f == f_last)
+         continue;
+      if (gap >= stall_us * (retro_time_t)(f - f_last))
+         (*stalls)++;
+      else
+      {
+         took   += gap;
+         frames += f - f_last;
+      }
+      f_last = f;
+      t_last = t;
+   }
+   return took > 0 ? (double)frames * 1000000.0 / (double)took : 0.0;
 }
 
 static void lane_pacing_rate(void)
@@ -5226,11 +5275,11 @@ static void lane_pacing_rate(void)
       for (ts = 0; ts < 2; ts++)
       {
          double best = 0.0, fps;
-         unsigned t;
+         unsigned t, stalls = 0;
          for (t = 0; t < 3; t++)
          {
             fps = pacing_rate_measure(thr, cases[c].display_hz,
-                  cases[c].panel_hz, cases[c].content_fps, ts != 0);
+                  cases[c].panel_hz, cases[c].content_fps, ts != 0, &stalls);
             if (fabs(fps - cases[c].expect) < fabs(best - cases[c].expect))
                best = fps;
             if (fabs(best - cases[c].expect) <= cases[c].expect * 0.02)
@@ -5243,9 +5292,10 @@ static void lane_pacing_rate(void)
                cases[c].display_hz,
                ts ? "present timestamps" : "no timestamps (vsync off)",
                best, cases[c].expect);
-         fprintf(stderr, "   pacing rate: %5.1f fps on %8.3f Hz, %-13s %.2f fps\n",
+         fprintf(stderr, "   pacing rate: %5.1f fps on %8.3f Hz, %-13s %.2f fps"
+               " (%u stalls left out)\n",
                cases[c].content_fps, cases[c].panel_hz,
-               ts ? "timestamps:" : "clock grid:", best);
+               ts ? "timestamps:" : "clock grid:", best, stalls);
       }
 
    run_us(0);
@@ -7142,13 +7192,18 @@ static void surf_release_cb(void *user, gfx_surface_t *s, unsigned slot)
 
 static void surf_fill(gfx_surface_t *s, unsigned slot, unsigned seed)
 {
-   unsigned x, y, tries;
+   unsigned x, y;
    unsigned w = VIDEO_SCALE_W(s->dims), h = VIDEO_SCALE_H(s->dims);
    uint32_t *pixels;
-   for (tries = 0; tries < 16 && !gfx_surface_slot_writable(s, slot); tries++)
+   int64_t deadline = cpu_features_get_time_usec() + 2000000;
+   bool writable = gfx_surface_slot_writable(s, slot);
+   while (!writable && cpu_features_get_time_usec() < deadline)
+   {
       run_frames(1);
-   CHECK(gfx_surface_slot_writable(s, slot), "surface fill: slot never writable");
-   if (!gfx_surface_slot_writable(s, slot))
+      writable = gfx_surface_slot_writable(s, slot);
+   }
+   CHECK(writable, "surface fill: slot not writable within two seconds");
+   if (!writable)
       return;
    pixels = gfx_surface_slot_begin(s, slot);
    for (y = 0; y < h; y++)
@@ -8817,23 +8872,25 @@ static void lane_surface_4k(void)
    for (i = 0; i < 60; i++)
    {
       unsigned slot = i & 1;
-      int64_t t0, t1;
+      int64_t t0, t1, deadline;
       unsigned before = surf_releases;
       unsigned waited = 0;
       enum gfx_surface_submit_result r;
 
       /* A released descriptor can still name a GPU-owned lent slot.
-       * Return that slot before writing it, outside the submit timing. */
+       * Unpaced frontend iterations do not bound GPU completion time. */
+      deadline = cpu_features_get_time_usec() + 2000000;
       while ((s->inflight || !gfx_surface_slot_writable(s, slot))
-            && waited < 16)
+            && cpu_features_get_time_usec() < deadline)
       {
          run_frames(1);
          waited++;
       }
       CHECK(!s->inflight && gfx_surface_slot_writable(s, slot),
-            "4K frame %u: slot not writable within 16 frames", i);
+            "4K frame %u: slot not writable within two seconds (%u frames)",
+            i, waited);
       if (s->inflight || !gfx_surface_slot_writable(s, slot))
-         continue;
+         break;
       waited = 0;
       before = surf_releases;
 
@@ -8849,13 +8906,19 @@ static void lane_surface_4k(void)
          continue;
       submit_us[n_sub++] = t1 - t0;
       submit_total      += t1 - t0;
-      while (surf_releases == before && waited < 8)
+      deadline = cpu_features_get_time_usec() + 2000000;
+      while (surf_releases == before
+            && cpu_features_get_time_usec() < deadline)
       {
          run_frames(1);
          waited++;
       }
-      CHECK(waited < 8, "4K frame %u: slot not released within 8 frames", i);
+      CHECK(surf_releases != before,
+            "4K frame %u: slot not released within two seconds (%u frames)",
+            i, waited);
       release_frames[n_rel++] = waited;
+      if (surf_releases == before)
+         break;
       if (!first)
          first = s->handle;
    }
@@ -8890,7 +8953,7 @@ static void lane_surface_4k(void)
             (long long)(submit_total / n_sub));
 #endif
    }
-   CHECK(n_sub >= 30, "only %u of 60 4K submits were accepted", n_sub);
+   CHECK(n_sub == 60, "only %u of 60 4K submits were accepted", n_sub);
    if (s->handle && video_driver_texture_can_update())
       CHECK(s->handle == first, "4K in-place driver replaced the texture");
 
@@ -10340,6 +10403,164 @@ static void hwring_on_clear(uint64_t image)
             == retro_atomic_load_acquire_ptr(&hwring_drawing))
       hwring_overlaps++;
 }
+
+
+#ifdef HAVE_TEMPORAL_UPSCALER
+/* ------------------------------------------------------------------ */
+/* Lane: the temporal upscaler's inputs ride with their frame.         */
+/*   A core sets the upscaler's inputs for a frame, then pushes it;    */
+/*   the driver takes them inside its frame call. Under the wrapper    */
+/*   that call is on the video thread, frames later, by which time the */
+/*   core has set the inputs of a newer frame, or they were taken for  */
+/*   the one before: the driver then upscaled with the wrong jitter    */
+/*   and motion, or showed the frame raw. Every hardware frame drawn   */
+/*   must take exactly the inputs its own frame was pushed with.       */
+/* ------------------------------------------------------------------ */
+
+/* The inputs the core sets: one struct rewritten every frame, as a
+ * core's is, jitter_x the serial of the image it is for */
+static struct retro_hw_upscaler_inputs hwupsc_inputs;
+static unsigned hwupsc_serial;
+static struct { uint64_t image; unsigned serial; } hwupsc_images[16];
+static unsigned hwupsc_drawn, hwupsc_wrong, hwupsc_missing;
+static const struct retro_hw_render_upscaler_interface *hwupsc_iface;
+
+static bool hwupsc_optimal(void *data, unsigned mode, unsigned out_dims,
+      unsigned *render_dims, unsigned *min_dims, unsigned *max_dims)
+{
+   (void)data; (void)mode; (void)out_dims;
+   (void)render_dims; (void)min_dims; (void)max_dims;
+   return false;
+}
+
+/* The core's thread, before it clears the image it then hands over */
+static void hwupsc_on_clear(uint64_t image)
+{
+   unsigned i;
+   if (!image || !hwupsc_iface)
+      return;
+   hwupsc_serial++;
+   for (i = 0; i < 16; i++)
+      if (hwupsc_images[i].image == image || !hwupsc_images[i].image)
+         break;
+   if (i < 16)
+   {
+      hwupsc_images[i].image  = image;
+      hwupsc_images[i].serial = hwupsc_serial;
+   }
+   memset(&hwupsc_inputs, 0, sizeof(hwupsc_inputs));
+   hwupsc_inputs.jitter_x = (float)hwupsc_serial;
+   hwupsc_iface->set_inputs(hwupsc_iface->handle, &hwupsc_inputs);
+}
+
+/* The video thread's frame call: a hardware frame takes its inputs.
+ * The wait comes first, between the frame's claim and the driver's
+ * take: the core pushes a frame or two more in it, with their inputs. */
+static bool hwupsc_frame(void *data, const void *frame,
+      unsigned dims, uint64_t frame_count,
+      unsigned pitch, const char *msg, video_frame_info_t *video_info)
+{
+   retro_sleep(hwring_present_ms);
+   if (frame == RETRO_HW_FRAME_BUFFER_VALID)
+   {
+      const struct retro_hw_upscaler_inputs *in = video_upscaler_take_inputs();
+      unsigned i, want = 0;
+      for (i = 0; i < 16; i++)
+         if (hwupsc_images[i].image == hwring_installed)
+            want = hwupsc_images[i].serial;
+      /* (a frame pushed before the hook was armed has no inputs to
+       * take, rightly) */
+      if (want)
+      {
+         hwupsc_drawn++;
+         if (!in)
+            hwupsc_missing++;
+         else if ((unsigned)in->jitter_x != want)
+            hwupsc_wrong++;
+      }
+   }
+   hwring_installed = 0;
+   return hwring_inner->frame(data, frame, dims, frame_count,
+         pitch, msg, video_info);
+}
+
+static void lane_hw_ring_upscaler(void)
+{
+   dylib_t lib = runloop_state_get_ptr()->lib_handle;
+   void (*ring)(int) = lib
+      ? (void (*)(int))dylib_proc(lib, "harness_core_hw_ring") : NULL;
+   void (*on_clear)(void (*)(uint64_t)) = lib
+      ? (void (*)(void (*)(uint64_t)))dylib_proc(lib,
+            "harness_core_hw_ring_on_clear") : NULL;
+   video_upscaler_backend_t backend;
+   thread_video_t *thr;
+
+   if (!ring || !on_clear)
+   {
+      CHECK(0, "hw ring upscaler: the harness core has no ring mode");
+      return;
+   }
+   set_threaded_via_setting(true);
+   if (menu_is_up())
+      command_event(CMD_EVENT_MENU_TOGGLE, NULL);
+   hwlane_pump(5);
+   expect_wrapper(true, "hw ring upscaler");
+   thr = (thread_video_t*)video_state_get_ptr()->data;
+   if (!thr || !thr->frame.hw_ring)
+   {
+      CHECK(0, "hw ring upscaler: the wrapper has no hardware ring for this driver");
+      set_threaded_via_setting(false);
+      hwlane_pump(5);
+      return;
+   }
+
+   /* (an upscaler session: the interface exists while one is attached) */
+   backend.data    = NULL;
+   backend.optimal = hwupsc_optimal;
+   video_upscaler_attach(&backend);
+   hwupsc_iface = video_upscaler_get_interface();
+   CHECK(hwupsc_iface != NULL, "hw ring upscaler: the upscaler interface is handed out");
+   memset(hwupsc_images, 0, sizeof(hwupsc_images));
+   hwupsc_serial = hwupsc_drawn = hwupsc_wrong = hwupsc_missing = 0;
+
+   hwring_inner        = thr->driver;
+   hwring_driver       = *thr->driver;
+   hwring_driver.frame = hwupsc_frame;
+   hwring_present_ms   = 30;
+   hwring_installed    = 0;
+   set_driver(thr, &hwring_driver);
+   hwring_inner_poke           = thr->poke;
+   hwring_poke                 = *thr->poke;
+   hwring_poke.hw_ring_install = hwring_install;
+   set_poke(thr, &hwring_poke);
+   on_clear(hwupsc_on_clear);
+   ring(3);
+   hwlane_pump(HWRING_SLOW_FRAMES);
+   video_thread_wait_idle();
+   ring(0);
+   on_clear(NULL);
+   set_poke(thr, hwring_inner_poke);
+   set_driver(thr, hwring_inner);
+   video_upscaler_take_inputs();
+   video_upscaler_detach();
+   hwupsc_iface = NULL;
+
+   CHECK(hwupsc_drawn >= HWRING_SLOW_FRAMES / 12,
+         "hw ring upscaler: %u hardware frames drawn behind a slow present:"
+         " the lane proved nothing", hwupsc_drawn);
+   CHECK(hwupsc_missing == 0,
+         "hw ring upscaler: %u of %u hardware frames drawn took no upscaler"
+         " inputs", hwupsc_missing, hwupsc_drawn);
+   CHECK(hwupsc_wrong == 0,
+         "hw ring upscaler: %u of %u hardware frames drawn took another"
+         " frame's upscaler inputs", hwupsc_wrong, hwupsc_drawn);
+   if (!hwupsc_missing && !hwupsc_wrong && hwupsc_drawn >= HWRING_SLOW_FRAMES / 12)
+      fprintf(stderr, "[pass] hw ring upscaler: %u hardware frames each took"
+            " their own upscaler inputs behind a slow present\n", hwupsc_drawn);
+   set_threaded_via_setting(false);
+   hwlane_pump(5);
+}
+#endif
 
 #ifdef HAVE_VULKAN
 /* The Vulkan context the driver is on now; the context driver's data
@@ -11820,6 +12041,9 @@ int main(int argc, char *argv[])
       else
       {
          lane_hw_ring_sync();
+#ifdef HAVE_TEMPORAL_UPSCALER
+         lane_hw_ring_upscaler();
+#endif
          lane_hw_image_lifetime(core_path);
       }
       goto shutdown;

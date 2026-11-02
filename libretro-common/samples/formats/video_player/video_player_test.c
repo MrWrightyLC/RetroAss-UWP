@@ -106,7 +106,8 @@ typedef struct
    bool waiting;
    int duration_ms;
    int64_t movie_ns, lead_ns, frame_step_ns, stamp_jitter_ns;
-   bool stamp_quantized;
+   int64_t hw_failure_ns;
+   bool stamp_quantized, failed_stream;
    int catchup;        /* last value set */
    int catchup_sets;
    int argb;
@@ -141,6 +142,9 @@ int64_t image_transfer_anim_stream_frame_time_ns(void *stream,
    fake_t *f = (fake_t*)stream;
    int64_t time_ns;
    (void)type;
+   if (f->hw_on && f->hw_failure_ns && f->hw_fail_from
+         && f->pos >= f->hw_fail_from)
+      return f->hw_failure_ns;
    time_ns = f->pos ? f->lead_ns + (int64_t)(f->pos - 1)
       * (f->frame_step_ns ? f->frame_step_ns
             : (int64_t)f->duration_ms * 1000000)
@@ -190,7 +194,7 @@ const uint32_t *image_transfer_anim_stream_next(void *stream,
       f->wait_left--;
       return NULL;
    }
-   if (f->pos >= f->frames)
+   if (f->failed_stream || f->pos >= f->frames)
       return NULL;
    if (f->hw_on)
    {
@@ -1788,6 +1792,83 @@ static void lane_hw_worker_failure(void)
 #endif
 #endif
 
+#ifdef HAVE_THREADS
+static void lane_hw_failure_deadline(bool recover)
+{
+   fake_t f;
+   sink_t k;
+   video_player_sink_t sink;
+   video_player_t *p;
+   unsigned i;
+   enum video_player_state state = VIDEO_PLAYER_PLAYING;
+   fake_init(&f, 6, 5);
+   f.hw_can = true;
+   f.hw_fail_from = 1;
+   f.movie_ns = f.hw_failure_ns = (int64_t)30000 * 1000000;
+   sink_init_hw(&k, &sink);
+   sink.present = fallback_present;
+   k.fallback_stream = &f;
+   k.fallback_threaded = true;
+   k.fallback_caller = sthread_get_current_thread_id();
+   p = video_player_new(&f, IMAGE_TYPE_MP4, 1, &sink, 0);
+   CHECK(p && (!recover || video_player_set_hw_fallback(p, fallback_restart, &k)),
+         "failure deadline: setup");
+   if (!p)
+      return;
+   settle_hw_start(p, 1000000);
+   for (i = 0; i < 1000 && !k.nseen; i++)
+   {
+      state = video_player_poll(p, 1000000);
+      if (state == VIDEO_PLAYER_ENDED)
+         break;
+      retro_sleep(1);
+   }
+   CHECK(recover ? state == VIDEO_PLAYER_PLAYING && k.nseen == 1
+         && k.seen[0] == 0 && k.fallback_calls == 1
+         : state == VIDEO_PLAYER_ENDED && !k.nseen && !k.fallback_calls,
+         "failure deadline: waited for movie end (recovery %d)", recover);
+   for (i = 0; i < 1000 && !video_player_stop(p); i++)
+      retro_sleep(1);
+   CHECK(i < 1000, "failure deadline: stop did not settle");
+   video_player_free(p);
+   CHECK(f.hw_made == f.hw_abandoned, "failure deadline: native lease lost");
+}
+#endif
+
+static void lane_empty_movie_deadline(bool threaded, bool completed)
+{
+   fake_t f;
+   sink_t k;
+   video_player_sink_t sink;
+   video_player_t *p;
+   unsigned i;
+   enum video_player_state state = VIDEO_PLAYER_PLAYING;
+
+   fake_init(&f, completed ? 0 : 6, 5);
+   f.failed_stream = !completed;
+   f.movie_ns = (int64_t)30000 * 1000000;
+   sink_init(&k, &sink, true);
+   p = video_player_new(&f, IMAGE_TYPE_MP4, 1, &sink,
+         threaded ? 0 : VIDEO_PLAYER_INLINE);
+   CHECK(p != NULL, "empty movie: setup");
+   if (!p)
+      return;
+   for (i = 0; i < 1000 && state == VIDEO_PLAYER_PLAYING; i++)
+   {
+      state = video_player_poll(p, 1000000);
+      if (threaded)
+         retro_sleep(1);
+   }
+   CHECK(state == VIDEO_PLAYER_ENDED && !k.nseen
+         && !video_player_completed(p),
+         "empty movie: waited for movie end (thread %d, completed %d)",
+         threaded, completed);
+   for (i = 0; i < 1000 && !video_player_stop(p); i++)
+      retro_sleep(1);
+   CHECK(i < 1000, "empty movie: stop did not settle");
+   video_player_free(p);
+}
+
 static void lane_hw_start_result(bool refused)
 {
    fake_t f;
@@ -2286,6 +2367,14 @@ int main(void)
    lane_churn();
 #endif
 recovery_only:
+   lane_empty_movie_deadline(false, false);
+   lane_empty_movie_deadline(false, true);
+#ifdef HAVE_THREADS
+   lane_empty_movie_deadline(true, false);
+   lane_empty_movie_deadline(true, true);
+   lane_hw_failure_deadline(true);
+   lane_hw_failure_deadline(false);
+#endif
    lane_hw_start_result(true);
    lane_hw_start_result(false);
    lane_hw_recovery_state(false, true, false);

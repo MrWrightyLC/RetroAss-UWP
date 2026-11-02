@@ -191,6 +191,7 @@ enum
    RARCH_HEADSET_RECENTER,
    RARCH_LASER_POINTER_TOGGLE,
    RARCH_HEADSET_VIEW_TOGGLE,
+   RARCH_HEADSET_EDIT_SCREENS,
    RARCH_FPS_TOGGLE,
    RARCH_STATISTICS_TOGGLE,
    RARCH_AI_SERVICE,
@@ -256,6 +257,9 @@ enum input_touchpad
    INPUT_TOUCHPAD_OFF = 0,
    INPUT_TOUCHPAD_POINTER,   /* a touchscreen */
    INPUT_TOUCHPAD_MOUSE,
+   /* a click on the left or the right half presses a RetroPad button
+    * of each (input_playerN_touchpad_left, _right) */
+   INPUT_TOUCHPAD_HALVES,
    INPUT_TOUCHPAD_LAST
 };
 

@@ -47,6 +47,11 @@
 #define HAVE_RRAR 1
 #endif
 
+/* Nor has the bzip2 decoder. */
+#ifndef HAVE_RBZIP2
+#define HAVE_RBZIP2 1
+#endif
+
 #if defined(HAVE_OPENGL) && defined(HAVE_ANGLE)
 #ifndef HAVE_OPENGLES
 #define HAVE_OPENGLES  1
@@ -139,6 +144,11 @@ ARCHIVE FILE
 #include "../libretro-common/file/archive_file_zstd.c"
 #endif
 
+#ifdef HAVE_RBZIP2
+#include "../libretro-common/file/archive_file_bz2.c"
+#include "../libretro-common/encodings/encoding_rbzip2.c"
+#endif
+
 #ifdef HAVE_RRAR
 #include "../libretro-common/file/archive_file_rar.c"
 #include "../libretro-common/formats/rar/rrar_archive.c"
@@ -168,6 +178,7 @@ ENCODINGS
 ============================================================ */
 #include "../libretro-common/encodings/encoding_utf.c"
 #include "../libretro-common/encodings/encoding_crc32.c"
+#include "../libretro-common/encodings/encoding_xxh64.c"
 #include "../libretro-common/encodings/encoding_base64.c"
 
 /*============================================================
@@ -224,9 +235,16 @@ ACHIEVEMENTS
 #include "../cheevos/cheevos_menu.c"
 #include "../cheevos/cheevos_badge.c"
 
-#if defined(HAVE_CHEEVOS_RVZ)
-#ifdef HAVE_RZSTD
-#include "../cheevos/cheevos_rvz.c"
+#if defined(HAVE_CHEEVOS_RVZ) && defined(HAVE_RZSTD)
+#include "../libretro-common/formats/rvz/rvz.c"
+#ifndef HAVE_CRYPTO
+/* its AES, without the rest of the crypto library */
+#include "../libretro-common/crypto/crypto.c"
+#endif
+#ifndef HAVE_7ZIP
+/* its LZMA and LZMA2, without the 7z backend */
+#include "../libretro-common/formats/7z/r7z_lzma_stream.c"
+#include "../libretro-common/formats/7z/r7z_lzma2.c"
 #endif
 #endif
 
@@ -251,7 +269,12 @@ ACHIEVEMENTS
 #include "../deps/rcheevos/src/rcheevos/runtime_progress.c"
 #include "../deps/rcheevos/src/rcheevos/trigger.c"
 #include "../deps/rcheevos/src/rcheevos/value.c"
+/* the hashes' AES: the crypto library's wherever it is built */
+#if defined(HAVE_CRYPTO) || (defined(HAVE_CHEEVOS_RVZ) && defined(HAVE_RZSTD))
+#include "../cheevos/cheevos_aes.c"
+#else
 #include "../deps/rcheevos/src/rhash/aes.c"
+#endif
 #include "../deps/rcheevos/src/rhash/cdreader.c"
 #include "../deps/rcheevos/src/rhash/hash.c"
 #include "../deps/rcheevos/src/rhash/hash_rom.c"
@@ -373,6 +396,43 @@ VIDEO CONTEXT
 #endif
 
 #ifdef HAVE_VULKAN
+#if defined(ANDROID) \
+      && (defined(HAVE_RMP4) || defined(HAVE_RVP9) || defined(HAVE_RAV1) \
+            || defined(HAVE_RECORD_MEDIACODEC))
+#include "../gfx/common/vulkan_android_device.c"
+#include "../gfx/common/android_image_queue.c"
+#include "../gfx/common/android_frame.c"
+#include "../gfx/common/vulkan_android_image.c"
+#include "../gfx/common/vulkan_android_sync.c"
+#include "../gfx/common/vulkan_android_pipeline.c"
+#include "../gfx/common/vulkan_android_submit.c"
+#include "../gfx/common/vulkan_android_queue.c"
+#include "../gfx/common/vulkan_android_cache_entry.c"
+#include "../gfx/common/vulkan_android_cache.c"
+#ifdef HAVE_THREADS
+#include "../gfx/common/mediacodec_inventory.c"
+#include "../gfx/common/android_image_ndk.c"
+#include "../gfx/common/mediacodec_session.c"
+#include "../gfx/common/mediacodec_color.c"
+#include "../gfx/common/mediacodec_frame_export.c"
+#ifdef HAVE_RMP4
+#include "../gfx/common/mediacodec_hevc_packet.c"
+#include "../gfx/common/mediacodec_hevc_decoder.c"
+#include "../gfx/common/mediacodec_hevc_backend.c"
+#endif
+#ifdef HAVE_RVP9
+#include "../gfx/common/mediacodec_vp9_decoder.c"
+#include "../gfx/common/mediacodec_vp9_backend.c"
+#endif
+#ifdef HAVE_RAV1
+#include "../gfx/common/mediacodec_av1_decoder.c"
+#include "../gfx/common/mediacodec_av1_backend.c"
+#endif
+#endif
+#endif
+#if defined(ANDROID) && defined(HAVE_THREADS)
+#include "../record/record_android_capture_device.c"
+#endif
 #include "../gfx/common/vulkan_common.c"
 #include "../libretro-common/vulkan/vulkan_symbol_wrapper.c"
 #ifdef HAVE_RMP4
@@ -573,6 +633,10 @@ VIDEO IMAGE
 #include "../libretro-common/formats/h264/rh264.c"
 #include "../libretro-common/formats/h265/rh265.c"
 #endif
+#ifdef HAVE_RFLV
+#include "../libretro-common/formats/flv/rflv_mux.c"
+#endif
+
 #ifdef HAVE_RMP4
 #include "../libretro-common/formats/mp4/rmp4.c"
 #include "../libretro-common/formats/mp4/rmp4_video.c"
@@ -581,6 +645,10 @@ VIDEO IMAGE
 
 #ifdef HAVE_RVP9
 #include "../libretro-common/formats/vp9/rvp9.c"
+#endif
+
+#ifdef HAVE_RAV1
+#include "../libretro-common/formats/av1/rav1_hw.c"
 #endif
 
 #ifdef HAVE_RMPEG1
@@ -631,7 +699,7 @@ VIDEO DRIVER
 #include "../gfx/common/d3d_driver_pacing.c"
 #include "../libretro-common/gfx/nvidia/nvapi_loader.c"
 #endif
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
 #include "../gfx/video_upscaler.c"
 #include "../gfx/common/ffx_common.c"
 #include "../gfx/common/xess_common.c"
@@ -852,6 +920,9 @@ INPUT
 #ifdef HAVE_BSV_MOVIE
 #include "../input/bsv/bsvmovie.c"
 #include "../input/bsv/uint32s_index.c"
+#ifdef HAVE_STATESTREAM
+#include "../libretro-common/encodings/encoding_xxh3.c"
+#endif
 #endif
 #include "../input/input_keymaps.c"
 #include "../tasks/task_autodetect.c"
@@ -970,7 +1041,8 @@ INPUT
 #endif
 
 /* the thread the joypad drivers write to their controllers from */
-#if defined(HAVE_XINPUT) || defined(HAVE_WINRAWINPUT) || defined(HAVE_UDEV)
+#if defined(HAVE_XINPUT) || defined(HAVE_WINRAWINPUT) || defined(HAVE_UDEV) || defined(ANDROID) \
+   || (defined(DINGUX) && defined(HAVE_SDL_DINGUX))
 #include "../input/common/output_writer.c"
 #endif
 
@@ -987,17 +1059,6 @@ INPUT
 #ifdef HAVE_UDEV
 #include "../input/drivers/udev_input.c"
 #include "../input/drivers_joypad/udev_joypad.c"
-#endif
-
-#if defined(HAVE_LIBSHAKE)
-#include "../deps/libShake/src/common/error.c"
-#include "../deps/libShake/src/common/helpers.c"
-#include "../deps/libShake/src/common/presets.c"
-#if TARGET_OS_OSX
-#include "../deps/libShake/src/osx/shake.c"
-#elif defined(__linux__) || (defined(BSD) && !defined(__MACH__))
-#include "../deps/libShake/src/linux/shake.c"
-#endif
 #endif
 
 #ifdef HAVE_TEST_DRIVERS
@@ -1055,6 +1116,7 @@ INPUT (HID)
 #include "../input/connect/connect_snesusb.c"
 #include "../input/connect/connect_nesusb.c"
 #include "../input/connect/connect_wiiugca.c"
+#include "../input/connect/connect_xid.c"
 #include "../input/connect/connect_ps2adapter.c"
 #include "../input/connect/connect_psxadapter.c"
 #include "../input/connect/connect_retrode.c"
@@ -1079,7 +1141,8 @@ FIFO BUFFER
 #include "../libretro-common/queues/retro_spsc.c"
 /* Native Windows audio workers also need rthreads and eventcounts. */
 #if defined(HAVE_THREADS) || (defined(_WIN32) && !defined(_XBOX) \
-      && (defined(HAVE_DSOUND) || defined(HAVE_XAUDIO) || defined(HAVE_WAVEOUT)))
+      && (defined(HAVE_DSOUND) || defined(HAVE_XAUDIO) || defined(HAVE_WAVEOUT) \
+      || defined(HAVE_ASIO)))
 #include "../libretro-common/rthreads/retro_eventcount.c"
 #endif
 #if defined(HAVE_THREADS)
@@ -1142,6 +1205,8 @@ LEDS
 
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
 #include "../led/drivers/led_win32_keyboard.c"
+#elif defined(HAVE_X11)
+#include "../led/drivers/led_x11_keyboard.c"
 #endif
 
 /*============================================================
@@ -1497,6 +1562,9 @@ FRONTEND
 
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
 #include "../frontend/drivers/platform_win32.c"
+#ifdef HAVE_NVDA
+#include "../frontend/drivers/nvda_controller_win32.c"
+#endif
 #endif
 
 #if defined(__WINRT__) || defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
@@ -1535,6 +1603,7 @@ FRONTEND
 #include "../frontend/drivers/platform_qnx.c"
 #elif defined(__linux__) || (defined(BSD) && !defined(__MACH__))
 #include "../frontend/drivers/platform_unix.c"
+#include "../frontend/drivers/gamemode_linux.c"
 #if defined(ANDROID)
 #include "../libretro-common/jni/rjni.c"
 #endif
@@ -1543,7 +1612,7 @@ FRONTEND
 #endif
 
 #if defined(DINGUX)
-#include "../dingux/dingux_utils.c"
+#include "../os/dingux/dingux_utils.c"
 #endif
 
 #include "../core_info.c"
@@ -1630,6 +1699,34 @@ RECORDING
 #include "../record/drivers/record_wav.c"
 #include "../record/drivers/record_nvenc.c"
 #include "../record/drivers/record_metal.c"
+#include "../record/drivers/record_mediacodec.c"
+#ifdef HAVE_RECORD_MEDIACODEC
+#include "../record/record_audio_tap.c"
+#include "../record/record_aac_probe.c"
+#include "../record/record_mp4_audio_edit.c"
+#include "../record/record_mediacodec_encoder.c"
+#include "../record/record_mux_mediacodec.c"
+#include "../record/record_mediacodec_worker.c"
+#include "../record/record_mediacodec_surface.c"
+#include "../record/record_mediacodec_file.c"
+#include "../record/record_mediacodec_file_edit.c"
+#include "../record/record_session_mediacodec.c"
+#include "../record/record_dispatch_mediacodec.c"
+#include "../record/record_gpu_dispatch_mediacodec.c"
+#include "../record/record_mediacodec_gpu_worker.c"
+#include "../record/record_android_capture_config.c"
+#include "../record/record_android_capture_request.c"
+#include "../record/record_android_capture_images.c"
+#include "../record/record_android_capture_submit.c"
+#include "../record/record_android_capture_pipe.c"
+#include "../record/record_android_capture_pool.c"
+#include "../record/record_android_capture_ops.c"
+#include "../record/record_android_capture_egl.c"
+#include "../record/record_android_capture_gl.c"
+#include "../record/record_android_capture_draw.c"
+#include "../record/record_gpu_queue.c"
+#include "../record/record_audio_queue.c"
+#endif
 #ifdef HAVE_RECORD_METAL
 #include "../record/record_gpu_queue.c"
 #include "../record/record_audio_queue.c"
@@ -1666,7 +1763,8 @@ THREAD
 #include "../frontend/thread_elevation/eevdf.c"
 #endif
 #elif defined(_WIN32) && !defined(_XBOX) \
-      && (defined(HAVE_DSOUND) || defined(HAVE_XAUDIO) || defined(HAVE_WAVEOUT))
+      && (defined(HAVE_DSOUND) || defined(HAVE_XAUDIO) || defined(HAVE_WAVEOUT) \
+      || defined(HAVE_ASIO))
 #include "../libretro-common/rthreads/rthreads.c"
 #endif
 
@@ -1684,6 +1782,17 @@ NETPLAY
 #include "../libretro-common/net/net_compat.c"
 #include "../libretro-common/net/net_socket.c"
 #include "../libretro-common/net/net_http.c"
+#ifdef HAVE_RTMP
+#include "../libretro-common/net/net_rtmp_chunk.c"
+#include "../libretro-common/net/net_rtmp_command.c"
+#include "../libretro-common/net/net_rtmp_control.c"
+#include "../libretro-common/net/net_rtmp_handshake.c"
+#include "../libretro-common/net/net_rtmp_publish.c"
+#include "../libretro-common/net/net_rtmp_receive.c"
+#include "../libretro-common/net/net_rtmp_reply.c"
+#include "../libretro-common/net/net_rtmp_session.c"
+#include "../libretro-common/net/net_rtmp_socket.c"
+#endif
 #ifdef HAVE_IFINFO
 #include "../libretro-common/net/net_ifinfo.c"
 #endif
@@ -1775,6 +1884,10 @@ MENU
 #ifdef HAVE_MENU
 #include "../menu/menu_str.c"
 #include "../menu/menu_driver.c"
+#include "../libretro-common/formats/subtitle/rsubtitle_vtt.c"
+#include "../libretro-common/formats/subtitle/rsubtitle_vtt_css.c"
+#include "../libretro-common/formats/subtitle/rsubtitle_vtt_css_tree.c"
+#include "../libretro-common/formats/subtitle/rsubtitle_vtt_selector.c"
 #include "../libretro-common/formats/subtitle/rsubtitle_srt.c"
 #include "../tasks/task_subtitle.c"
 #include "../gfx/gfx_media_subtitle.c"
@@ -1882,6 +1995,9 @@ DEPENDENCIES
 #include "../libretro-common/formats/7z/r7z_lzma2.c"
 #include "../libretro-common/formats/7z/r7z_bcj2.c"
 #include "../libretro-common/formats/7z/r7z_filters.c"
+#ifndef HAVE_RRAR
+#include "../libretro-common/formats/rar/rrar_ppmd7.c"
+#endif
 #endif
 
 
@@ -1899,9 +2015,7 @@ DEPENDENCIES
 #endif
 
 #ifdef WANT_IOSUHAX
-#include "../deps/libiosuhax/source/iosuhax.c"
-#include "../deps/libiosuhax/source/iosuhax_devoptab.c"
-#include "../deps/libiosuhax/source/iosuhax_disc_interface.c"
+#include "../os/wiiu/fs/iosuhax.c"
 #endif
 
 /*============================================================
@@ -1987,7 +2101,7 @@ TIME
 ANDROID PLAY FEATURE DELIVERY
 ============================================================ */
 #if defined(ANDROID)
-#include "../play_feature_delivery/play_feature_delivery.c"
+#include "../os/android/play_feature_delivery.c"
 #endif
 
 
@@ -2050,9 +2164,8 @@ SMB CLIENT
 #include "../libretro-common/net/net_nfs3.c"
 #include "../libretro-common/vfs/vfs_implementation_nfs.c"
 #endif
-#if defined(HAVE_SMBCLIENT) || defined(HAVE_NFSCLIENT)
+/* Always: statically linked cores read ahead through it too */
 #include "../libretro-common/vfs/vfs_prefetch.c"
-#endif
 
 #if defined(_WIN32) && !defined(__WINRT__)
 #if defined(HAVE_VULKAN) || defined(HAVE_OPENGL) || defined(HAVE_OPENGL1) || defined(HAVE_OPENGL_CORE) || defined(HAVE_OPENGLES)

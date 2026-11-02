@@ -336,7 +336,6 @@ struct runloop
    unsigned pending_windowed_scale;
    unsigned max_frames;
    unsigned audio_latency;
-   unsigned fastforward_after_frames;
    unsigned perf_ptr_libretro;
    unsigned subsystem_current_count;
    unsigned video_swap_interval_auto;
@@ -378,6 +377,9 @@ struct runloop
    bool auto_state_load_attempted;
    bool auto_state_load_ready;
    bool auto_state_load_core_ran;
+   /* The auto state was asked for by name (Load State > Auto), so it
+    * loads whatever Auto Load State says. */
+   bool auto_state_load_asked;
 
    bool perfcnt_enable;
    bool paused_hotkey;

@@ -86,30 +86,108 @@ enum video_temporal_upscaler_quality
    VIDEO_TEMPORAL_UPSCALER_QUALITY_LAST
 };
 
-/* video_temporal_upscaler_preset: the DLSS model (ngx_dlss_render_preset) */
+/* video_temporal_upscaler_preset: the DLSS model, numbered as NGX
+ * numbers its render presets (ngx_dlss_render_preset: 0 default, A to
+ * O 1 to 15) */
 enum video_temporal_upscaler_preset
 {
    VIDEO_TEMPORAL_UPSCALER_PRESET_DEFAULT = 0,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_A,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_B,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_C,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_D,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_E,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_F,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_G,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_H,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_I,
    VIDEO_TEMPORAL_UPSCALER_PRESET_J,
    VIDEO_TEMPORAL_UPSCALER_PRESET_K,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_L,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_M,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_N,
+   VIDEO_TEMPORAL_UPSCALER_PRESET_O,
    VIDEO_TEMPORAL_UPSCALER_PRESET_LAST
 };
 
+/* The DLSS feature library in the DLSS directory, as NGX_VERSION_PACK
+ * has it (NGX_VERSION_MAJOR and so on); 0 when none is found or it
+ * does not say. Read once a directory. */
+uint32_t video_upscaler_dlss_version(void);
+
+/* The oldest DLSS feature library known to carry @preset; 0 for the
+ * letters every one has */
+uint32_t video_upscaler_preset_min_version(enum video_temporal_upscaler_preset preset);
+
+/* DLSS Neural Rendering (DLSS 5), run over DLSS Super Resolution's
+ * output: its feature library in the DLSS directory, as
+ * NGX_VERSION_PACK has it (0 when none is found or it does not say),
+ * read once a directory; whether it can be offered (the library is
+ * there, NGX is not OptiScaler's, and no session has found the driver
+ * without it). A session notes what NGX said of the feature. */
+uint32_t video_upscaler_dlssnr_version(void);
+bool video_upscaler_nr_available(void);
+void video_upscaler_note_nr(bool supported);
+
+/* The Neural Rendering settings as one word, 0 when it is off: flags,
+ * the model's preset and style, and its strengths in 5% steps (0 to
+ * 40); skin structure 0 follows local structure, else 1 + its steps */
+#define VIDEO_UPSCALER_NR_ON          0x1u
+#define VIDEO_UPSCALER_NR_AUTO_MASK   0x2u
+#define VIDEO_UPSCALER_NR_PACK(flags, preset, style, intensity, structure, tone, skin) \
+   ((unsigned)(flags) | ((unsigned)(preset) << 2) | ((unsigned)(style) << 4) \
+    | ((unsigned)(intensity) << 6) | ((unsigned)(structure) << 12) \
+    | ((unsigned)(tone) << 18) | ((unsigned)(skin) << 24))
+#define VIDEO_UPSCALER_NR_PRESET(w)    (((w) >> 2) & 0x3u)
+#define VIDEO_UPSCALER_NR_STYLE(w)     (((w) >> 4) & 0x3u)
+#define VIDEO_UPSCALER_NR_INTENSITY(w) (((w) >> 6) & 0x3fu)
+#define VIDEO_UPSCALER_NR_STRUCTURE(w) (((w) >> 12) & 0x3fu)
+#define VIDEO_UPSCALER_NR_TONE(w)      (((w) >> 18) & 0x3fu)
+#define VIDEO_UPSCALER_NR_SKIN(w)      (((w) >> 24) & 0x3fu)
+#define VIDEO_UPSCALER_NR_STEP         0.05f
+unsigned video_upscaler_nr_mode(void);
+
+/* Whether NGX's calls are answered by OptiScaler: known from the NGX
+ * library's own module at the probe, or from a session's parameters
+ * (the backends note it). */
+bool video_upscaler_optiscaler(void);
+void video_upscaler_note_optiscaler(void);
+
+/* Whether the running core asked for the upscaler before its context
+ * was made (RETRO_ENVIRONMENT_GET_HW_RENDER_UPSCALER_INTERFACE during
+ * retro_load_game): only then are its libraries loaded and the
+ * context made for it. Cleared when the core unloads. */
+bool video_upscaler_wanted(void);
+void video_upscaler_note_wanted(void);
+void video_upscaler_clear_wanted(void);
+
 /* The mode for an output of @out_dims (VIDEO_SCALE_PACK): the quality
- * setting, Auto resolved, and the preset, as one word
- * (VIDEO_UPSCALER_MODE_PACK), the backends' own mode words by the
- * translations below. */
+ * setting, Auto resolved, the preset and the sharpness (percent), as
+ * one word (VIDEO_UPSCALER_MODE_PACK), the backends' own mode words by
+ * the translations below. */
 #define VIDEO_UPSCALER_MODE_PACK(quality, preset) ((unsigned)(quality) | ((unsigned)(preset) << 8))
-#define VIDEO_UPSCALER_MODE_QUALITY(mode)         ((mode) & 0xffu)   /* enum video_temporal_upscaler_quality, never Auto */
-#define VIDEO_UPSCALER_MODE_PRESET(mode)          ((mode) >> 8)      /* enum video_temporal_upscaler_preset */
+#define VIDEO_UPSCALER_MODE_PACK_SHARP(quality, preset, sharpness) \
+   (VIDEO_UPSCALER_MODE_PACK(quality, preset) | ((unsigned)(sharpness) << 16))
+#define VIDEO_UPSCALER_MODE_QUALITY(mode)         ((mode) & 0xffu)          /* enum video_temporal_upscaler_quality, never Auto */
+#define VIDEO_UPSCALER_MODE_PRESET(mode)          (((mode) >> 8) & 0xffu)   /* enum video_temporal_upscaler_preset */
+#define VIDEO_UPSCALER_MODE_SHARPNESS(mode)       (((mode) >> 16) & 0xffu)  /* 0 to 100 */
 unsigned video_upscaler_mode(unsigned out_dims);
 
-/* NGX_MODE_PACK: an enum ngx_perf_quality and an enum
- * ngx_dlss_render_preset */
+/* The frame time the upscalers weigh their history by: the core's own
+ * when it gave one, else the period of its frame, which is what a
+ * presented frame advances the content by whatever the clock did */
+float video_upscaler_frame_time_ms(const struct retro_hw_upscaler_inputs *inputs);
+
+/* NGX_MODE_PACK_SHARP: an enum ngx_perf_quality, an enum
+ * ngx_dlss_render_preset and the sharpness */
 unsigned video_upscaler_mode_ngx(unsigned mode);
-/* An FFX_UPSCALE_MODE_ (the preset has no FSR meaning) */
+/* An FFX_UPSCALE_MODE_ in the low byte, the sharpness above (bit 16;
+ * FFX_MODE_QUALITY and FFX_MODE_SHARPNESS take them apart); the preset
+ * has no FSR meaning */
 unsigned video_upscaler_mode_ffx(unsigned mode);
-/* An XESS_QUALITY_ */
+#define FFX_MODE_QUALITY(mode)   ((mode) & 0xffu)
+#define FFX_MODE_SHARPNESS(mode) (((mode) >> 16) & 0xffu)
+/* An XESS_QUALITY_ (XeSS sharpens nothing) */
 unsigned video_upscaler_mode_xess(unsigned mode);
 
 /* A video driver's upscaler, attached while its session is up:
@@ -132,12 +210,24 @@ void video_upscaler_detach(void);
 void video_upscaler_set_output(unsigned dims);
 
 /* The interface handed to the core (RETRO_ENVIRONMENT_GET_HW_RENDER_
- * UPSCALER_INTERFACE); NULL without HAVE_NGX or a driver that can. */
+ * UPSCALER_INTERFACE); NULL without HAVE_TEMPORAL_UPSCALER or a driver
+ * that can. */
 const struct retro_hw_render_upscaler_interface *video_upscaler_get_interface(void);
 
 /* The inputs the core set for the frame being presented, taken: NULL
  * when it set none. The driver reads them inside video_refresh. */
 const struct retro_hw_upscaler_inputs *video_upscaler_take_inputs(void);
+
+/* The threaded video wrapper: at the core's push, on the core's thread,
+ * the inputs the core set for the frame pushed; and before the wrapper
+ * drives the driver with that frame on its own thread, those inputs
+ * (its copy, or NULL) for the driver's take there. Once carried, the
+ * driver's takes come from the carry alone. */
+const struct retro_hw_upscaler_inputs *video_upscaler_take_set_inputs(void);
+void video_upscaler_carry_inputs(const struct retro_hw_upscaler_inputs *inputs);
+/* When the wrapper's ring goes: the driver's takes are the core's
+ * own again */
+void video_upscaler_drop_carry(void);
 
 RETRO_END_DECLS
 

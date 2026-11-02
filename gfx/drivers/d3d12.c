@@ -72,7 +72,7 @@
 
 #include "../common/d3d_common.h"
 #include "../common/dxgi_common.h"
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
 #include "../common/d3d12_upscaler.h"
 #include "../video_upscaler.h"
 #endif
@@ -94,7 +94,7 @@
 #endif
 
 #ifdef __WINRT__
-#include "../../uwp/uwp_func.h"
+#include "../../os/uwp/uwp_func.h"
 #include <compat/strl.h>
 #endif
 
@@ -540,7 +540,7 @@ typedef struct
    struct retro_hw_render_interface_d3d12 hw_iface;
    D3D12Resource hw_render_texture;
    DXGI_FORMAT hw_render_texture_format;
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
    d3d12_upscaler_t *ngx;
    d3d12_upscaler_image_t ngx_out;
 #endif
@@ -5606,7 +5606,7 @@ static void d3d12_gfx_free(void* data)
       return;
 
    d3d12_queue_drain(d3d12);
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
    if (d3d12->ngx)
    {
       video_upscaler_detach();
@@ -5919,7 +5919,7 @@ static bool d3d12_init_swapchain(d3d12_video_t* d3d12,
 
       DXGISetMaximumFrameLatency(d3d12->chain.handle, max_latency);
       DXGIGetMaximumFrameLatency(d3d12->chain.handle, &cur_latency);
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
       if (config_get_ptr()->uints.video_temporal_upscaler)
          video_upscaler_log_probe((enum video_temporal_upscaler)
                config_get_ptr()->uints.video_temporal_upscaler);
@@ -6605,7 +6605,7 @@ static void d3d12_hw_v2_set_texture_fenced(void *data, ID3D12Resource *texture,
       d3d12->queue.handle->lpVtbl->Wait(d3d12->queue.handle, fence, value);
 }
 
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
 static bool d3d12_upscaler_optimal_cb(void *data, unsigned mode,
       unsigned out_dims, unsigned *render_dims,
       unsigned *min_dims, unsigned *max_dims)
@@ -6932,8 +6932,8 @@ static void *d3d12_gfx_init(const video_info_t* video)
       d3d12->hw_iface.required_state    = D3D12_RESOURCE_STATE_COPY_SOURCE;
       d3d12->hw_iface.set_texture       = d3d12_set_hw_render_texture;
       d3d12->hw_iface.D3DCompile        = D3DCompile;
-#ifdef HAVE_NGX
-      if (config_get_ptr()->uints.video_temporal_upscaler)
+#ifdef HAVE_TEMPORAL_UPSCALER
+      if (config_get_ptr()->uints.video_temporal_upscaler && video_upscaler_wanted())
       {
          enum video_temporal_upscaler kind = (enum video_temporal_upscaler)
             config_get_ptr()->uints.video_temporal_upscaler;
@@ -9358,7 +9358,7 @@ static bool d3d12_gfx_frame_body(
    bool message_visible;
    bool draw_direct               = false;
 #ifdef HAVE_GFX_WIDGETS
-   bool widgets_visible;
+   bool widgets_visible           = video_info->widgets_visible;
 #endif
    unsigned black_frame_insertion = video_info->black_frame_insertion;
    int bfi_light_frames;
@@ -9677,7 +9677,7 @@ recording_resize_deferred:;
    cmd->lpVtbl->IASetPrimitiveTopology(cmd,
          D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
    if (d3d12->ngx && frame)
    {
       unsigned up_dims = VIDEO_SCALE_PACK(width, height);
@@ -10303,16 +10303,9 @@ recording_resize_deferred:;
       d3d12_vv_target_drop(d3d12, &d3d12->views.ui_target,
             &d3d12->views.ui);
    /* Drawn and composited only when there is UI; overlays are hidden. */
-   /* No directive inside the macro's arguments: MSVC's preprocessor
-    * takes it as tokens. */
-#ifdef HAVE_GFX_WIDGETS
    views_ui = VIDEO_VIEWS_UI_WANTED(views_per_eye,
          (d3d12->flags & D3D12_ST_FLAG_MENU_ENABLE), msg, statistics_show,
-         widgets_active && gfx_widgets_visible(video_info))
-#else
-   views_ui = VIDEO_VIEWS_UI_WANTED(views_per_eye,
-         (d3d12->flags & D3D12_ST_FLAG_MENU_ENABLE), msg, statistics_show, false)
-#endif
+         video_info->widgets_visible)
       && d3d12->views.rect
       && d3d12_vv_target_ensure(d3d12, &d3d12->views.ui_target,
             &d3d12->views.ui, video_info->views_layout.ui_dims);
@@ -10336,10 +10329,6 @@ recording_resize_deferred:;
 #ifdef HAVE_DXGI_HDR
    cmd->lpVtbl->SetGraphicsRootConstantBufferView(cmd, ROOT_ID_PC,
          d3d12_cb_slot(&d3d12->hdr.ubo_sprites_view, d3d12->queue.slot));
-#endif
-
-#ifdef HAVE_GFX_WIDGETS
-   widgets_visible                   = gfx_widgets_visible(video_info);
 #endif
 
    message_visible                    = ((statistics_show) && (osd_params)) || (msg && *msg);
@@ -10614,7 +10603,7 @@ recording_resize_deferred:;
       d3d12_record_free(d3d12);
 
    d3d12_cmd_execute(d3d12);
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
    if (d3d12->ngx)
       d3d12_upscaler_frame_done(d3d12->ngx);
 #endif

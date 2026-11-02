@@ -45,23 +45,24 @@ SOURCES := vulkan_upscaler_test.c \
 
 ifneq ($(findstring mingw,$(CC)),)
    EXE    := .exe
-   FAKE   := _nvngx.dll Zdir_fsr/amd_fidelityfx_vk.dll Zdir_xess/libxess.dll
+   FAKE   := _nvngx.dll nvngx_dlss.dll Zdir_fsr/amd_fidelityfx_vk.dll Zdir_xess/libxess.dll
    LDLIBS := -ladvapi32
    RUNNER ?= wine
    SOFLAGS :=
 else
    EXE    :=
-   FAKE   := libnvidia-ngx.so.1 Zdir_fsr/libamd_fidelityfx_vk.so Zdir_xess/libxess.so
+   FAKE   := libnvidia-ngx.so.1 libnvidia-ngx-dlss.so.310.2.1 Zdir_fsr/libamd_fidelityfx_vk.so Zdir_xess/libxess.so
    LDLIBS := -lvulkan -lpthread -ldl -lm
    RUNNER ?= env LD_LIBRARY_PATH=.
    SOFLAGS := -fPIC
 endif
 
+FAKE_DLSS := $(LIBRETRO_COMM_DIR)/samples/gfx/nvidia/fake_dlss.c
 FAKE_FFX  := $(LIBRETRO_COMM_DIR)/samples/gfx/amd/fake_ffx.c
 FAKE_XESS := $(LIBRETRO_COMM_DIR)/samples/gfx/intel/fake_xess.c
 
 CFLAGS  += -Wall -std=gnu99 -g1 -O0 \
-           -DHAVE_VULKAN -DHAVE_NGX -DHAVE_THREADS -DHAVE_DYLIB -DHAVE_MENU \
+           -DHAVE_VULKAN -DHAVE_TEMPORAL_UPSCALER -DHAVE_THREADS -DHAVE_DYLIB -DHAVE_MENU \
            -DRARCH_INTERNAL -DHAVE_CONFIGFILE \
            -I$(REPO_ROOT) \
            -I$(REPO_ROOT)/gfx/include \
@@ -81,6 +82,14 @@ _nvngx.dll: fake_ngx.c fake_ngx.h
 
 libnvidia-ngx.so.1: fake_ngx.c fake_ngx.h
 	$(CC) -shared -fPIC -O1 -Wall -Wl,-soname,libnvidia-ngx.so.1 -o $@ $<
+
+# (with its file version resource on Windows, as the real one has)
+nvngx_dlss.dll: $(FAKE_DLSS) $(FAKE_DLSS:.c=.rc)
+	$(patsubst %gcc,%windres,$(CC)) -o fake_dlss_res.o $(FAKE_DLSS:.c=.rc)
+	$(CC) -shared -O1 -Wall -o $@ $< fake_dlss_res.o
+
+libnvidia-ngx-dlss.so.310.2.1: $(FAKE_DLSS)
+	$(CC) -shared $(SOFLAGS) -O1 -Wall -o $@ $<
 
 Zdir_fsr/amd_fidelityfx_vk.dll Zdir_fsr/libamd_fidelityfx_vk.so: $(FAKE_FFX) $(FAKE_FFX:.c=.h)
 	@mkdir -p $(@D)
@@ -104,7 +113,7 @@ check: all
 	$(RUNNER) ./$(TARGET)$(EXE)
 
 clean:
-	rm -f $(TARGET) $(TARGET).exe $(TARGET).o _nvngx.dll libnvidia-ngx.so.1
-	rm -rf $(SAMPLE_OBJDIR) Zdir Zdir_fsr Zdir_xess Zdir_none
+	rm -f $(TARGET) $(TARGET).exe $(TARGET).o _nvngx.dll libnvidia-ngx.so.1 nvngx_dlss.dll libnvidia-ngx-dlss.so.310.2.1 fake_dlss_res.o
+	rm -rf $(SAMPLE_OBJDIR) Zdir Zdir_fsr Zdir_xess Zdir_none Zdir_keep
 
 .PHONY: all check clean

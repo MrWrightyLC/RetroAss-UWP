@@ -126,13 +126,13 @@ void android_app_set_window_settings(bool notch_write_over,
 #include "../ui/ui_companion_driver.h"
 #include "../performance_counters.h"
 #include "../setting_list.h"
-#include "../lakka.h"
+#include "../os/lakka/lakka.h"
 #ifdef HAVE_LAKKA_SWITCH
-#include "../lakka-switch.h"
+#include "../os/lakka/lakka-switch.h"
 #endif
 #include "../retroarch.h"
 #include "../gfx/video_display_server.h"
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
 #include "../gfx/video_upscaler.h"
 #endif
 #include "../gfx/video_views.h"
@@ -148,6 +148,7 @@ void android_app_set_window_settings(bool notch_write_over,
 #include "../manual_content_scan.h"
 #include "../input/input_osk.h"
 #include "../input/input_remapping.h"
+#include "../input/common/overlay_contact.h"
 
 #include "../tasks/tasks_internal.h"
 
@@ -174,11 +175,11 @@ void android_app_set_window_settings(bool notch_write_over,
 #endif
 
 #if defined(DINGUX)
-#include "../dingux/dingux_utils.h"
+#include "../os/dingux/dingux_utils.h"
 #endif
 
 #if defined(ANDROID)
-#include "../play_feature_delivery/play_feature_delivery.h"
+#include "../os/android/play_feature_delivery.h"
 #endif
 
 #ifdef HAVE_LANGEXTRA
@@ -353,9 +354,7 @@ SETTINGS_ACTION_SETTER(sel, action_select_handler_t)
 SETTINGS_ACTION_SETTER(left, action_left_handler_t)
 SETTINGS_ACTION_SETTER(right, action_right_handler_t)
 SETTINGS_ACTION_SETTER(change, change_handler_t)
-#ifdef ANDROID
 SETTINGS_ACTION_SETTER(read, change_handler_t)
-#endif
 SETTINGS_ACTION_SETTER(repr, get_string_representation_t)
 
 #define SETTINGS_ACTION_SET(field, s, fn) \
@@ -3949,6 +3948,134 @@ static size_t setting_get_string_representation_video_openxr_laser(
       }
    }
    return 0;
+}
+
+static size_t setting_get_string_representation_video_openxr_laser_beam(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case VIDEO_OPENXR_LASER_BEAM_OFF:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_OFF), len);
+         case VIDEO_OPENXR_LASER_BEAM_EDIT:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_EDIT), len);
+         case VIDEO_OPENXR_LASER_BEAM_ALWAYS:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_LASER_BEAM_ALWAYS),
+                  len);
+      }
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_video_openxr_edit_snap_angles(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case VIDEO_OPENXR_EDIT_SNAP_ANGLES_OFF:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SNAP_ANGLES_OFF),
+                  len);
+         case VIDEO_OPENXR_EDIT_SNAP_ANGLES_15:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SNAP_ANGLES_15),
+                  len);
+         case VIDEO_OPENXR_EDIT_SNAP_ANGLES_30:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SNAP_ANGLES_30),
+                  len);
+         case VIDEO_OPENXR_EDIT_SNAP_ANGLES_45:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SNAP_ANGLES_45),
+                  len);
+         case VIDEO_OPENXR_EDIT_SNAP_ANGLES_90:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SNAP_ANGLES_90),
+                  len);
+      }
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_video_openxr_edit_hinge_gap(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case VIDEO_OPENXR_EDIT_HINGE_GAP_0:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_HINGE_GAP_0),
+                  len);
+         case VIDEO_OPENXR_EDIT_HINGE_GAP_1:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_HINGE_GAP_1),
+                  len);
+         case VIDEO_OPENXR_EDIT_HINGE_GAP_2:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_HINGE_GAP_2),
+                  len);
+         case VIDEO_OPENXR_EDIT_HINGE_GAP_3:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_HINGE_GAP_3),
+                  len);
+         case VIDEO_OPENXR_EDIT_HINGE_GAP_5:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_HINGE_GAP_5),
+                  len);
+         case VIDEO_OPENXR_EDIT_HINGE_GAP_10:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_HINGE_GAP_10),
+                  len);
+      }
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_video_openxr_edit_smoothing(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case VIDEO_OPENXR_EDIT_SMOOTHING_OFF:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_OFF),
+                  len);
+         case VIDEO_OPENXR_EDIT_SMOOTHING_LOW:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_LOW),
+                  len);
+         case VIDEO_OPENXR_EDIT_SMOOTHING_MEDIUM:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_MEDIUM),
+                  len);
+         case VIDEO_OPENXR_EDIT_SMOOTHING_HIGH:
+            return strlcpy(s, msg_hash_to_str(
+                     MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_SMOOTHING_HIGH),
+                  len);
+      }
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_video_openxr_edit_pause(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (!setting)
+      return 0;
+   return strlcpy(s, msg_hash_to_str(*setting->value.target.boolean
+            ? MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_PAUSE_ON
+            : MENU_ENUM_LABEL_VALUE_VIDEO_OPENXR_EDIT_PAUSE_OFF), len);
 }
 
 static size_t setting_get_string_representation_video_openxr_placement(
@@ -8015,7 +8142,7 @@ static size_t setting_get_string_representation_uint_menu_frame_rate(
    return 0;
 }
 
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
 static size_t setting_get_string_representation_uint_video_temporal_upscaler_quality(
       rarch_setting_t *setting, char *s, size_t len)
 {
@@ -8042,15 +8169,38 @@ static size_t setting_get_string_representation_uint_video_temporal_upscaler_pre
 {
    static const enum msg_hash_enums names[VIDEO_TEMPORAL_UPSCALER_PRESET_LAST] = {
       MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_DEFAULT,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_A,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_B,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_C,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_D,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_E,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_F,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_G,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_H,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_I,
       MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_J,
-      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_K
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_K,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_L,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_M,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_N,
+      MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_O
    };
    if (setting)
    {
       unsigned q = *setting->value.target.unsigned_integer;
+      uint32_t version;
+      size_t _len;
       if (q >= VIDEO_TEMPORAL_UPSCALER_PRESET_LAST)
          q = VIDEO_TEMPORAL_UPSCALER_PRESET_DEFAULT;
-      return strlcpy(s, msg_hash_to_str(names[q]), len);
+      _len = strlcpy(s, msg_hash_to_str(names[q]), len);
+      /* (a letter the DLSS runtime found is too old for: said so) */
+      version = video_upscaler_dlss_version();
+      if (version && version < video_upscaler_preset_min_version(
+               (enum video_temporal_upscaler_preset)q))
+         _len += strlcpy(s + _len, msg_hash_to_str(
+                  MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_PRESET_NOT_IN_RUNTIME),
+               len - _len);
+      return _len;
    }
    return 0;
 }
@@ -8075,6 +8225,53 @@ static size_t setting_get_string_representation_uint_video_temporal_upscaler(
             break;
       }
       return strlcpy(s, msg_hash_to_str(MENU_ENUM_LABEL_VALUE_OFF), len);
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_uint_video_dlss_nr_preset(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   static const enum msg_hash_enums names[4] = {
+      MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_PRESET_DEFAULT,
+      MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_PRESET_1,
+      MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_PRESET_2,
+      MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_PRESET_3
+   };
+   if (setting)
+   {
+      unsigned q = *setting->value.target.unsigned_integer;
+      return strlcpy(s, msg_hash_to_str(names[q < 4 ? q : 0]), len);
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_uint_video_dlss_nr_style(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   static const enum msg_hash_enums names[3] = {
+      MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_STYLE_DEFAULT,
+      MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_STYLE_NATURAL,
+      MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_STYLE_CINEMATIC
+   };
+   if (setting)
+   {
+      unsigned q = *setting->value.target.unsigned_integer;
+      return strlcpy(s, msg_hash_to_str(names[q < 3 ? q : 0]), len);
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_int_video_dlss_nr_skin_structure(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      int v = *setting->value.target.integer;
+      if (v < 0)
+         return strlcpy(s, msg_hash_to_str(
+                  MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_SKIN_STRUCTURE_FOLLOW), len);
+      return snprintf(s, len, "%d%%", v);
    }
    return 0;
 }
@@ -8528,8 +8725,22 @@ static size_t setting_get_string_representation_input_touchpad(
       case INPUT_TOUCHPAD_MOUSE:
          e = MENU_ENUM_LABEL_VALUE_INPUT_TOUCHPAD_MOUSE;
          break;
+      case INPUT_TOUCHPAD_HALVES:
+         e = MENU_ENUM_LABEL_VALUE_INPUT_TOUCHPAD_HALVES;
+         break;
    }
    return strlcpy(s, msg_hash_to_str(e), len);
+}
+
+/* A touchpad half's RetroPad button, by its name */
+static size_t setting_get_string_representation_input_touchpad_half(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   const char *desc;
+   if (!setting)
+      return 0;
+   desc = input_config_bind_map_get_desc(*setting->value.target.unsigned_integer);
+   return strlcpy(s, desc ? desc : "", len);
 }
 
 static size_t setting_get_string_representation_input_rotation(
@@ -8551,6 +8762,24 @@ static size_t setting_get_string_representation_input_rotation(
          break;
       case INPUT_ROTATION_AUTO:
          e = MENU_ENUM_LABEL_VALUE_INPUT_ROTATION_AUTO;
+         break;
+   }
+   return strlcpy(s, msg_hash_to_str(e), len);
+}
+
+static size_t setting_get_string_representation_overlay_contact_method(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   enum msg_hash_enums e = MENU_ENUM_LABEL_VALUE_OVERLAY_CONTACT_METHOD_VECTOR;
+   if (!setting)
+      return 0;
+   switch (*setting->value.target.unsigned_integer)
+   {
+      case OVERLAY_CONTACT_METHOD_AREA:
+         e = MENU_ENUM_LABEL_VALUE_OVERLAY_CONTACT_METHOD_AREA;
+         break;
+      case OVERLAY_CONTACT_METHOD_BOTH:
+         e = MENU_ENUM_LABEL_VALUE_OVERLAY_CONTACT_METHOD_BOTH;
          break;
    }
    return strlcpy(s, msg_hash_to_str(e), len);
@@ -9272,6 +9501,10 @@ static const enum settings_list_type settings_list_build_order[] =
 #endif
       SETTINGS_LIST_MANUAL_CONTENT_SCAN
    };
+
+static bool setting_append_list_video_screen_settings(
+      rarch_setting_t **list, rarch_setting_info_t *list_info,
+      const char *parent_group);
 
 static bool setting_append_list(settings_t *settings,
       enum settings_list_type type, rarch_setting_t **list,
@@ -10162,6 +10395,194 @@ static size_t get_string_representation_input_mouse_index(
    if (!s || !*s)
       _len = strlcpy(s, msg_hash_to_str(MENU_ENUM_LABEL_VALUE_DISABLED), len);
    return _len;
+}
+
+static unsigned setting_video_screen_mask(void)
+{
+   video_driver_state_t *video_st = video_state_get_ptr();
+   const video_views_map_t *map = &video_st->views_core;
+   unsigned i, mask = 0;
+   /* A frame without a map is screen 1. */
+   if (!video_st->views_presented)
+      return 1u;
+   for (i = 0; i < map->num_views && i < RETRO_VIDEO_VIEWS_MAX; i++)
+      if (map->views[i].screen < RETRO_VIDEO_VIEWS_MAX)
+         mask |= 1u << map->views[i].screen;
+#ifdef HAVE_OPENXR
+   if (     video_driver_vr_content_active()
+         && (video_driver_xr_headset() & VIDEO_XR_HEADSET_TRACKING))
+   {
+      int eyes[2];
+      if (video_views_eye_pair(map, eyes))
+         mask &= ~(1u << map->views[eyes[0]].screen);
+   }
+#endif
+   return mask;
+}
+
+static unsigned setting_video_screen_bind(rarch_setting_t *setting)
+{
+   settings_t *settings = config_get_ptr();
+   struct menu_state *menu_st = menu_state_get_ptr();
+   unsigned screen = menu_st->video_screen_selected;
+   unsigned mask = setting_video_screen_mask();
+   if (screen >= RETRO_VIDEO_VIEWS_MAX || !(mask & (1u << screen)))
+   {
+      for (screen = 0; screen < RETRO_VIDEO_VIEWS_MAX; screen++)
+         if (mask & (1u << screen))
+            break;
+      menu_st->video_screen_selected = screen < RETRO_VIDEO_VIEWS_MAX
+         ? screen : 0;
+   }
+   if (setting->enum_idx == MENU_ENUM_LABEL_VIDEO_SCREEN_SELECTED)
+   {
+      setting->value.target.unsigned_integer = mask
+         ? &menu_st->video_screen_selected : NULL;
+      return mask;
+   }
+   if (!mask)
+      return 0;
+   screen = menu_st->video_screen_selected;
+   setting->index_offset = screen;
+   switch (setting->enum_idx)
+   {
+      case MENU_ENUM_LABEL_VIDEO_SCREEN_XR_X:
+         setting->value.target.fraction = &settings->floats.video_screen_xr_x[screen];
+         break;
+      case MENU_ENUM_LABEL_VIDEO_SCREEN_XR_Y:
+         setting->value.target.fraction = &settings->floats.video_screen_xr_y[screen];
+         break;
+      case MENU_ENUM_LABEL_VIDEO_SCREEN_XR_Z:
+         setting->value.target.fraction = &settings->floats.video_screen_xr_z[screen];
+         break;
+      case MENU_ENUM_LABEL_VIDEO_SCREEN_XR_YAW:
+         setting->value.target.fraction = &settings->floats.video_screen_xr_yaw[screen];
+         break;
+      case MENU_ENUM_LABEL_VIDEO_SCREEN_XR_PITCH:
+         setting->value.target.fraction = &settings->floats.video_screen_xr_pitch[screen];
+         break;
+      case MENU_ENUM_LABEL_VIDEO_SCREEN_XR_ROLL:
+         setting->value.target.fraction = &settings->floats.video_screen_xr_roll[screen];
+         break;
+      case MENU_ENUM_LABEL_VIDEO_SCREEN_XR_SCALE:
+         setting->value.target.fraction = &settings->floats.video_screen_xr_scale[screen];
+         break;
+      case MENU_ENUM_LABEL_VIDEO_SCREEN_XR_VISIBLE:
+         setting->value.target.boolean = &settings->bools.video_screen_xr_visible[screen];
+         break;
+   }
+   return mask;
+}
+
+static void setting_video_screen_read(rarch_setting_t *setting)
+{
+   setting_video_screen_bind(setting);
+}
+
+static void setting_video_screen_change(rarch_setting_t *setting)
+{
+   if (setting->enum_idx != MENU_ENUM_LABEL_VIDEO_SCREEN_SELECTED)
+      config_get_ptr()->flags |= SETTINGS_FLG_MODIFIED;
+}
+
+static size_t setting_video_screen_repr(rarch_setting_t *setting,
+      char *s, size_t len)
+{
+   if (!setting_video_screen_bind(setting))
+      return strlcpy(s, "", len);
+   if (setting->enum_idx == MENU_ENUM_LABEL_VIDEO_SCREEN_SELECTED)
+      return snprintf(s, len, "%u", menu_state_get_ptr()->video_screen_selected + 1);
+   if (setting->type == ST_FLOAT)
+      return setting_get_string_representation_st_float(setting, s, len);
+   if (setting->type == ST_BOOL)
+      return setting_get_string_representation_st_bool(setting, s, len);
+   return strlcpy(s, "", len);
+}
+
+static int setting_video_screen_step(rarch_setting_t *setting,
+      size_t idx, bool right)
+{
+   unsigned mask = setting_video_screen_bind(setting);
+   if (!mask)
+      return -1;
+   if (setting->enum_idx == MENU_ENUM_LABEL_VIDEO_SCREEN_SELECTED)
+   {
+      struct menu_state *menu_st = menu_state_get_ptr();
+      unsigned screen = menu_st->video_screen_selected;
+      unsigned i;
+      for (i = 0; i < RETRO_VIDEO_VIEWS_MAX; i++)
+      {
+         screen = (screen + (right ? 1 : RETRO_VIDEO_VIEWS_MAX - 1))
+            % RETRO_VIDEO_VIEWS_MAX;
+         if (mask & (1u << screen))
+            break;
+      }
+      if (i == RETRO_VIDEO_VIEWS_MAX)
+         return -1;
+      menu_st->video_screen_selected = screen;
+      menu_st->flags |= MENU_ST_FLAG_PREVENT_POPULATE
+         | MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+      return 0;
+   }
+   if (setting->type == ST_BOOL)
+      return setting_bool_action_ok_default(setting, idx, false);
+   if (right)
+      return setting_fraction_action_right_default(setting, idx, false);
+   return setting_fraction_action_left_default(setting, idx, false);
+}
+
+static int setting_video_screen_left(rarch_setting_t *setting,
+      size_t idx, bool wraparound)
+{
+   return setting_video_screen_step(setting, idx, false);
+}
+
+static int setting_video_screen_right(rarch_setting_t *setting,
+      size_t idx, bool wraparound)
+{
+   return setting_video_screen_step(setting, idx, true);
+}
+
+static int setting_video_screen_start(rarch_setting_t *setting)
+{
+   if (!setting_video_screen_bind(setting))
+      return -1;
+   if (setting->enum_idx == MENU_ENUM_LABEL_VIDEO_SCREEN_SELECTED)
+   {
+      menu_state_get_ptr()->video_screen_selected = RETRO_VIDEO_VIEWS_MAX;
+      setting_video_screen_bind(setting);
+      return 0;
+   }
+   return setting_generic_action_start_default(setting);
+}
+
+static int setting_video_screen_reset(rarch_setting_t *setting,
+      size_t idx, bool wraparound)
+{
+   settings_t *settings = config_get_ptr();
+   struct menu_state *menu_st = menu_state_get_ptr();
+   if (setting->enum_idx == MENU_ENUM_LABEL_VIDEO_SCREEN_XR_RESET_ALL)
+   {
+      config_reset_video_screen_xr(settings, 0, RETRO_VIDEO_VIEWS_MAX);
+      config_reset_video_menu_xr(settings);
+   }
+   else
+   {
+      if (!setting_video_screen_bind(setting))
+         return -1;
+      config_reset_video_screen_xr(settings, menu_st->video_screen_selected, 1);
+   }
+   settings->flags |= SETTINGS_FLG_MODIFIED;
+   menu_st->flags |= MENU_ST_FLAG_PREVENT_POPULATE
+      | MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   return 0;
+}
+
+static int setting_video_screen_edit(rarch_setting_t *setting,
+      size_t idx, bool wraparound)
+{
+   command_event(CMD_EVENT_HEADSET_EDIT_SCREENS, NULL);
+   return 0;
 }
 
 static void general_read_handler(rarch_setting_t *setting)
@@ -12382,6 +12803,8 @@ static bool setting_append_list_input_player_options(
       char keyboard_index[64];
       char aim_stick[64];
       char touchpad[64];
+      char touchpad_left[64];
+      char touchpad_right[64];
       char bind_all[64];
       char bind_all_save_autoconfig[64];
       char bind_defaults[64];
@@ -12414,6 +12837,12 @@ static bool setting_append_list_input_player_options(
             user + 1);
       snprintf(touchpad, sizeof(touchpad),
             MENU_ENUM_LABEL_INPUT_TOUCHPAD_STR,
+            user + 1);
+      snprintf(touchpad_left, sizeof(touchpad_left),
+            MENU_ENUM_LABEL_INPUT_TOUCHPAD_LEFT_STR,
+            user + 1);
+      snprintf(touchpad_right, sizeof(touchpad_right),
+            MENU_ENUM_LABEL_INPUT_TOUCHPAD_RIGHT_STR,
             user + 1);
       snprintf(bind_all, sizeof(bind_all),
             MENU_ENUM_LABEL_INPUT_BIND_ALL_INDEX_STR,
@@ -12570,6 +12999,42 @@ static bool setting_append_list_input_player_options(
       menu_settings_list_current_add_range(list, list_info, 0, INPUT_TOUCHPAD_LAST - 1, 1.0, true, true);
       MENU_SETTINGS_LIST_CURRENT_ADD_ENUM_IDX_PTR(list, list_info,
             (enum msg_hash_enums)(MENU_ENUM_LABEL_INPUT_TOUCHPAD + user));
+
+      CONFIG_UINT_ALT(
+            list, list_info,
+            &settings->uints.input_touchpad_left[user],
+            touchpad_left,
+            msg_hash_to_str(MENU_ENUM_LABEL_VALUE_INPUT_TOUCHPAD_LEFT),
+            RETRO_DEVICE_ID_JOYPAD_SELECT,
+            &group_info,
+            &subgroup_info,
+            parent_group,
+            general_write_handler,
+            general_read_handler);
+      (*list)[list_info->index - 1].index_offset  = user;
+      SETTINGS_ACTION_SET(ok, &(*list)[list_info->index - 1], &setting_action_ok_uint)
+      SETTINGS_ACTION_SET(repr, &(*list)[list_info->index - 1], &setting_get_string_representation_input_touchpad_half)
+      menu_settings_list_current_add_range(list, list_info, 0, RARCH_FIRST_CUSTOM_BIND - 1, 1.0, true, true);
+      MENU_SETTINGS_LIST_CURRENT_ADD_ENUM_IDX_PTR(list, list_info,
+            (enum msg_hash_enums)(MENU_ENUM_LABEL_INPUT_TOUCHPAD_LEFT + user));
+
+      CONFIG_UINT_ALT(
+            list, list_info,
+            &settings->uints.input_touchpad_right[user],
+            touchpad_right,
+            msg_hash_to_str(MENU_ENUM_LABEL_VALUE_INPUT_TOUCHPAD_RIGHT),
+            RETRO_DEVICE_ID_JOYPAD_START,
+            &group_info,
+            &subgroup_info,
+            parent_group,
+            general_write_handler,
+            general_read_handler);
+      (*list)[list_info->index - 1].index_offset  = user;
+      SETTINGS_ACTION_SET(ok, &(*list)[list_info->index - 1], &setting_action_ok_uint)
+      SETTINGS_ACTION_SET(repr, &(*list)[list_info->index - 1], &setting_get_string_representation_input_touchpad_half)
+      menu_settings_list_current_add_range(list, list_info, 0, RARCH_FIRST_CUSTOM_BIND - 1, 1.0, true, true);
+      MENU_SETTINGS_LIST_CURRENT_ADD_ENUM_IDX_PTR(list, list_info,
+            (enum msg_hash_enums)(MENU_ENUM_LABEL_INPUT_TOUCHPAD_RIGHT + user));
 
       CONFIG_UINT_ALT(
             list, list_info,
@@ -13341,12 +13806,16 @@ static const setting_desc_t stereo_desc[] = {
 #include "../settings/settings_def_video_stereo.h"
 };
 
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
 static const setting_desc_t upscaler_desc[] = {
 /* GENERATED: rows come from settings_def_video_upscaler.h in order. */
 #include "../settings/settings_def_video_upscaler.h"
 };
 #endif
+
+static const setting_desc_t video_screens_desc[] = {
+#include "../settings/settings_def_video_screens.h"
+};
 
 static const setting_desc_t headset_desc[] = {
 /* GENERATED: rows come from settings_def_video_headset.h in order. */
@@ -16355,6 +16824,7 @@ static void settings_build_video(
          setting_append_list_video_screen_windows(settings, list, list_info,
                &group_info, &subgroup_info, parent_group);
 #endif
+         setting_append_list_video_screen_settings(list, list_info, parent_group);
 
          END_SUB_GROUP(list, list_info, parent_group);
 
@@ -16364,7 +16834,7 @@ static void settings_build_video(
 
          END_SUB_GROUP(list, list_info, parent_group);
 
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
          START_SUB_GROUP(list, list_info, "Temporal Upscaler", &group_info, &subgroup_info, parent_group);
 
          ADD_DESC(upscaler_desc);
@@ -16794,6 +17264,21 @@ static void settings_build_input(
                   MENU_ENUM_LABEL_INPUT_STYLUS_HOVER_MOVES_POINTER,
                   MENU_ENUM_LABEL_VALUE_INPUT_STYLUS_HOVER_MOVES_POINTER,
                   false,
+                  MENU_ENUM_LABEL_VALUE_OFF,
+                  MENU_ENUM_LABEL_VALUE_ON,
+                  &group_info,
+                  &subgroup_info,
+                  parent_group,
+                  general_write_handler,
+                  general_read_handler,
+                  SD_FLAG_NONE);
+
+            CONFIG_BOOL(
+                  list, list_info,
+                  &settings->bools.input_stylus_hide_overlay,
+                  MENU_ENUM_LABEL_INPUT_STYLUS_HIDE_OVERLAY,
+                  MENU_ENUM_LABEL_VALUE_INPUT_STYLUS_HIDE_OVERLAY,
+                  true,
                   MENU_ENUM_LABEL_VALUE_OFF,
                   MENU_ENUM_LABEL_VALUE_ON,
                   &group_info,
@@ -19222,21 +19707,6 @@ static void settings_build_manual_content_scan(
             general_read_handler,
             SD_FLAG_NONE);
 
-      CONFIG_BOOL(
-            list, list_info,
-            manual_content_scan_get_scan_single_file_ptr(),
-            MENU_ENUM_LABEL_SCAN_SINGLE_FILE,
-            MENU_ENUM_LABEL_VALUE_SCAN_SINGLE_FILE,
-            false,
-            MENU_ENUM_LABEL_VALUE_OFF,
-            MENU_ENUM_LABEL_VALUE_ON,
-            &group_info,
-            &subgroup_info,
-            parent_group,
-            general_write_handler,
-            general_read_handler,
-            SD_FLAG_NONE);
-
       CONFIG_PATH(
             list, list_info,
             manual_content_scan_get_dat_file_path_ptr(),
@@ -19495,6 +19965,54 @@ static void settings_build_desc_group(
       settings_list_add_desc(list, list_info, settings,
             e->rows, e->count, &group_info, &subgroup_info, parent_group);
    GROUP_END();
+}
+
+static bool setting_append_list_video_screen_settings(
+      rarch_setting_t **list, rarch_setting_info_t *list_info,
+      const char *parent_group)
+{
+   settings_t *settings = config_get_ptr();
+   rarch_setting_group_info_t group_info;
+   rarch_setting_group_info_t subgroup_info;
+   unsigned first = list_info->index;
+   int i;
+   group_info.name = msg_hash_to_str(MENU_ENUM_LABEL_VALUE_VIDEO_SETTINGS);
+   subgroup_info.name = "Stereo 3D & Screens";
+   CONFIG_UINT(list, list_info, &menu_state_get_ptr()->video_screen_selected,
+         MENU_ENUM_LABEL_VIDEO_SCREEN_SELECTED,
+         MENU_ENUM_LABEL_VALUE_VIDEO_SCREEN_SELECTED, 0,
+         &group_info, &subgroup_info, parent_group,
+         setting_video_screen_change, setting_video_screen_read);
+   settings_list_add_desc(list, list_info, settings, video_screens_desc + 1,
+         ARRAY_SIZE(video_screens_desc) - 1, &group_info, &subgroup_info,
+         parent_group);
+   for (i = first; i < list_info->index; i++)
+   {
+      rarch_setting_t *setting = &(*list)[i];
+      SETTINGS_ACTION_SET(read, setting, setting_video_screen_read)
+      SETTINGS_ACTION_SET(change, setting, setting_video_screen_change)
+      if (setting->enum_idx == MENU_ENUM_LABEL_VIDEO_SCREEN_XR_EDIT)
+      {
+         SETTINGS_ACTION_SET(ok, setting, setting_video_screen_edit)
+         SETTINGS_ACTION_SET(sel, setting, setting_video_screen_edit)
+      }
+      else if (setting->type == ST_ACTION)
+      {
+         SETTINGS_ACTION_SET(ok, setting, setting_video_screen_reset)
+         SETTINGS_ACTION_SET(sel, setting, setting_video_screen_reset)
+      }
+      else
+      {
+         SETTINGS_ACTION_SET(repr, setting, setting_video_screen_repr)
+         SETTINGS_ACTION_SET(left, setting, setting_video_screen_left)
+         SETTINGS_ACTION_SET(right, setting, setting_video_screen_right)
+         SETTINGS_ACTION_SET(ok, setting, setting_video_screen_right)
+         SETTINGS_ACTION_SET(sel, setting, setting_video_screen_right)
+         SETTINGS_ACTION_SET(start, setting, setting_video_screen_start)
+      }
+      setting_video_screen_bind(setting);
+   }
+   return true;
 }
 
 static const settings_build_entry_t settings_build_registry[] = {
@@ -19916,7 +20434,7 @@ static const settings_desc_table_t settings_desc_registry[] = {
    { hdr_desc, (uint16_t)ARRAY_SIZE(hdr_desc) },
    { vid_desc_19, (uint16_t)ARRAY_SIZE(vid_desc_19) },
    { hdr_desc2, (uint16_t)ARRAY_SIZE(hdr_desc2) },
-#ifdef HAVE_NGX
+#ifdef HAVE_TEMPORAL_UPSCALER
    { upscaler_desc, (uint16_t)ARRAY_SIZE(upscaler_desc) },
 #endif
    { vid_desc_20, (uint16_t)ARRAY_SIZE(vid_desc_20) },

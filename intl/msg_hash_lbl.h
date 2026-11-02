@@ -1168,6 +1168,10 @@ MSG_HASH(
    "deferred_video_stereo_settings_list"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_VIDEO_DLSS_NR_SETTINGS_LIST,
+   "deferred_video_dlss_nr_settings_list"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_VIDEO_SCREEN_WINDOW_MODE,
    "video_screen%u_window_mode"
    )
@@ -1423,6 +1427,10 @@ MSG_HASH(
    "input_stylus_hover_moves_pointer"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_INPUT_STYLUS_HIDE_OVERLAY,
+   "input_stylus_hide_overlay"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_INPUT_STYLUS_PRESSURE_SENSITIVITY,
    "input_stylus_pressure_sensitivity"
    )
@@ -1496,6 +1504,14 @@ MSG_HASH(
    "input_player%u_touchpad"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_INPUT_TOUCHPAD_LEFT,
+   "input_player%u_touchpad_left"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_INPUT_TOUCHPAD_RIGHT,
+   "input_player%u_touchpad_right"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_INPUT_JOYPAD_INDEX,
    "input_player%u_joypad_index"
    )
@@ -1566,6 +1582,18 @@ MSG_HASH(
 MSG_HASH(
    MENU_ENUM_LABEL_INPUT_OVERLAY_ANALOG_RECENTER_ZONE,
    "input_overlay_analog_recenter_zone"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_INPUT_OVERLAY_DPAD_METHOD,
+   "input_overlay_dpad_method"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_INPUT_OVERLAY_ABXY_METHOD,
+   "input_overlay_abxy_method"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_INPUT_OVERLAY_CONTACT_SCALE,
+   "input_overlay_contact_scale"
    )
 MSG_HASH(
    MENU_ENUM_LABEL_INPUT_SETTINGS_BEGIN,
@@ -2398,10 +2426,6 @@ MSG_HASH(
 MSG_HASH(
    MENU_ENUM_LABEL_SCAN_TARGET_PLAYLIST,
    "scan_target_playlist"
-   )
-MSG_HASH(
-   MENU_ENUM_LABEL_SCAN_SINGLE_FILE,
-   "scan_single_file"
    )
 MSG_HASH(
    MENU_ENUM_LABEL_SCAN_OMIT_DB_REF,

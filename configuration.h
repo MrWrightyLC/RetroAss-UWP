@@ -35,7 +35,7 @@
 #include "led/led_defines.h"
 
 #ifdef HAVE_LAKKA
-#include "lakka.h"
+#include "os/lakka/lakka.h"
 #endif
 
 #include "msg_hash.h"
@@ -166,6 +166,10 @@ typedef struct settings
       unsigned input_aim_stick[MAX_USERS];
       /* 0 off, 1 a touchscreen, 2 a mouse: enum input_touchpad */
       unsigned input_touchpad[MAX_USERS];
+      /* the RetroPad buttons the touchpad's halves press, in its
+       * Buttons mode */
+      unsigned input_touchpad_left[MAX_USERS];
+      unsigned input_touchpad_right[MAX_USERS];
 
       unsigned input_libretro_device[MAX_USERS];
       unsigned input_analog_dpad_mode[MAX_USERS];
@@ -227,6 +231,7 @@ typedef struct settings
 #endif
       unsigned input_touch_scale;
       unsigned input_hotkey_block_delay;
+      unsigned input_hotkey_tap_delay;
       unsigned input_quit_gamepad_combo;
       unsigned input_menu_toggle_gamepad_combo;
       unsigned input_keyboard_gamepad_mapping_type;
@@ -285,6 +290,12 @@ typedef struct settings
       unsigned video_temporal_upscaler;
       unsigned video_temporal_upscaler_quality;
       unsigned video_temporal_upscaler_preset;
+      unsigned video_temporal_upscaler_sharpness;
+      unsigned video_dlss_nr_preset;
+      unsigned video_dlss_nr_style;
+      unsigned video_dlss_nr_intensity;
+      unsigned video_dlss_nr_local_structure;
+      unsigned video_dlss_nr_local_tone;
       unsigned video_hard_sync_frames;
       unsigned video_frame_delay;
       unsigned video_scanline_sync_offset;
@@ -305,6 +316,10 @@ typedef struct settings
       unsigned video_openxr_refresh_rate;
       unsigned video_openxr_controllers;
       unsigned video_openxr_laser;
+      unsigned video_openxr_laser_beam;
+      unsigned video_openxr_edit_snap_angles;
+      unsigned video_openxr_edit_hinge_gap;
+      unsigned video_openxr_edit_smoothing;
       unsigned video_openxr_placement;
       unsigned video_fse_negotiation;
       unsigned video_hw_decode;
@@ -422,6 +437,9 @@ typedef struct settings
       unsigned input_overlay_dpad_diagonal_sensitivity;
       unsigned input_overlay_abxy_diagonal_sensitivity;
       unsigned input_overlay_analog_recenter_zone;
+      unsigned input_overlay_dpad_method;
+      unsigned input_overlay_abxy_method;
+      unsigned input_overlay_contact_scale;
       unsigned input_overlay_lightgun_trigger_delay;
       unsigned input_overlay_lightgun_two_touch_input;
       unsigned input_overlay_lightgun_three_touch_input;
@@ -524,6 +542,7 @@ typedef struct settings
       int crt_switch_porch_adjust;
       int crt_switch_vertical_adjust;
       int video_max_frame_latency;
+      int video_dlss_nr_skin_structure;
 #ifdef HAVE_VULKAN
       int vulkan_gpu_index;
 #endif
@@ -567,6 +586,21 @@ typedef struct settings
    struct
    {
       float placeholder;
+      float video_screen_xr_x[RETRO_VIDEO_VIEWS_MAX];
+      float video_screen_xr_y[RETRO_VIDEO_VIEWS_MAX];
+      float video_screen_xr_z[RETRO_VIDEO_VIEWS_MAX];
+      float video_screen_xr_yaw[RETRO_VIDEO_VIEWS_MAX];
+      float video_screen_xr_pitch[RETRO_VIDEO_VIEWS_MAX];
+      float video_screen_xr_roll[RETRO_VIDEO_VIEWS_MAX];
+      float video_screen_xr_scale[RETRO_VIDEO_VIEWS_MAX];
+      float video_openxr_menu_xr_x;
+      float video_openxr_menu_xr_y;
+      float video_openxr_menu_xr_z;
+      float video_openxr_menu_xr_yaw;
+      float video_openxr_menu_xr_pitch;
+      float video_openxr_menu_xr_roll;
+      float video_openxr_menu_xr_scale;
+
       float video_aspect_ratio;
       float video_vp_bias_x;
       float video_vp_bias_y;
@@ -662,6 +696,8 @@ typedef struct settings
    struct
    {
       bool placeholder;
+      bool video_screen_xr_visible[RETRO_VIDEO_VIEWS_MAX];
+      bool video_openxr_menu_placed;
 #ifdef HAVE_VIDEO_WINDOWS
       bool video_windows_enable;
       bool video_screen_window_fullscreen[RETRO_VIDEO_VIEWS_MAX];
@@ -683,7 +719,10 @@ typedef struct settings
       bool video_smooth;
       bool video_stereo_swap_eyes;
       bool video_openxr_enable;
+      bool video_openxr_menu_follow;
       bool video_openxr_perf_boost;
+      bool video_openxr_edit_pause;
+      bool video_openxr_edit_snap;
       bool video_ctx_scaling;
       bool video_force_aspect;
       bool video_frame_delay_auto;
@@ -729,6 +768,8 @@ typedef struct settings
       bool video_wiiu_prefer_drc;
       bool video_notch_write_over_enable;
       bool video_hdr_scanlines;
+      bool video_dlss_nr_enable;
+      bool video_dlss_nr_auto_mask;
       bool video_hdr_use_display_peak;
       bool video_hdr_send_luminance;
       bool video_use_metal_arg_buffers;
@@ -1013,6 +1054,8 @@ typedef struct settings
       bool netplay_start_as_spectator;
       bool netplay_fade_chat;
       bool netplay_allow_pausing;
+      bool netplay_analog_joypads;
+      bool netplay_lockstep;
       bool netplay_allow_slaves;
       bool netplay_require_slaves;
       bool netplay_nat_traversal;
@@ -1246,6 +1289,7 @@ typedef struct settings
       bool input_stylus_enable;
       bool input_stylus_require_contact_for_click;
       bool input_stylus_hover_moves_pointer;
+      bool input_stylus_hide_overlay;
 #endif
 
 #if defined(HAVE_COCOATOUCH)
@@ -1320,6 +1364,9 @@ typedef struct settings
 #ifdef ANDROID
       char input_android_physical_keyboard[NAME_MAX_LENGTH];
 #endif
+      /* Controllers the user leaves out, as SDL's
+       * SDL_GAMECONTROLLER_IGNORE_DEVICES writes them: "054c/09cc,..." */
+      char input_ignore_devices[512];
       char audio_device[NAME_MAX_LENGTH];
       /* Desktop companion dock layout, one plain row per dock:
        * "<area>,<shown>,<width>,<height>,<tabbed_with>,<raised>" - see
@@ -1704,6 +1751,23 @@ bool config_overlay_enable_default(void);
 #if defined(__APPLE__) && defined(HAVE_VULKAN)
 bool config_metal_arg_buffers_default(void);
 #endif
+
+void config_reset_video_screen_xr(settings_t *settings, unsigned first, unsigned count);
+
+/* The headset's menu back in front of screen 1. */
+void config_reset_video_menu_xr(settings_t *settings);
+
+struct video_screen_xr;
+/* Edit Screens' reads and writes of a screen's place, or the menu's,
+ * as the Stereo 3D & Screens rows keep them. A write normalises, marks
+ * the settings modified and leaves Visible alone; NULL resets a screen
+ * as Reset Screen does, or puts the menu back in front of screen 1. The
+ * menu's read is false while it follows screen 1. */
+void config_get_video_screen_xr(unsigned screen, struct video_screen_xr *out);
+bool config_get_video_menu_xr(struct video_screen_xr *out);
+void config_set_video_screen_xr(unsigned screen,
+      const struct video_screen_xr *values);
+void config_set_video_menu_xr(const struct video_screen_xr *values);
 
 void config_set_defaults(settings_t *target);
 

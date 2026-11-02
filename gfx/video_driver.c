@@ -155,7 +155,7 @@ static void video_driver_read_vp_params(struct video_vp_param_snap *ps);
 #endif
 
 #ifdef __WINRT__
-#include "../uwp/uwp_func.h"
+#include "../os/uwp/uwp_func.h"
 #endif
 
 #include "../audio/audio_driver.h"
@@ -1185,7 +1185,6 @@ struct shader_precompile
    retro_atomic_int_t             live;    /* tasks not yet through */
    retro_atomic_int_t             stop;    /* the load ended */
    retro_atomic_int_t             waker;   /* the stepper's ident, or -1 */
-   bool                           hlsl_or_msl;
 };
 
 static void shader_precompile_unref(struct shader_precompile *p)
@@ -1230,7 +1229,7 @@ static void shader_precompile_handler(retro_task_t *task)
       /* an earlier pass names the same file: its stages are listed by
        * the time this pass's step runs, and the step takes them */
       retro_atomic_store_release_int(&slot->state, SHADER_PRECOMPILE_FAILED);
-   else if (slang_compile_pass_detached(p->path[i], p->hlsl_or_msl, &output,
+   else if (slang_compile_pass_detached(p->path[i], &output,
             slot->key))
    {
       slot->vs = slang_blob_ref(output.vertex_blob);
@@ -1421,7 +1420,6 @@ static struct shader_precompile *shader_precompile_start(
    struct video_shader *shader;
    struct shader_precompile *p = NULL;
    retro_task_t *task;
-   const char *ident;
    unsigned i, tasks, pushed;
 
    if (!task_queue_is_threaded())
@@ -1445,10 +1443,7 @@ static struct shader_precompile *shader_precompile_start(
          goto fail;
       p->n++;
    }
-   ident          = video_driver_get_ident();
-   p->hlsl_or_msl = ident && (   string_starts_with(ident, "d3d1")
-                              || string_is_equal(ident, "metal"));
-   tasks          = p->n < SHADER_PRECOMPILE_TASKS
+   tasks = p->n < SHADER_PRECOMPILE_TASKS
       ? p->n : SHADER_PRECOMPILE_TASKS;
    retro_atomic_int_init(&p->next, 0);
    retro_atomic_int_init(&p->refs, (int)tasks + 1);
@@ -1909,6 +1904,10 @@ video_driver_t *hw_render_context_driver(
 #else
          break;
 #endif
+#ifdef HAVE_GCM
+      case RETRO_HW_CONTEXT_RSX:
+         return &video_gcm;
+#endif
       case RETRO_HW_CONTEXT_VULKAN:
 #if defined(HAVE_VULKAN)
          return &video_vulkan;
@@ -1965,6 +1964,10 @@ const char *hw_render_context_name(
    if (type == RETRO_HW_CONTEXT_D3D12)
       return "d3d12";
 #endif
+#ifdef HAVE_GCM
+   if (type == RETRO_HW_CONTEXT_RSX)
+      return "rsx";
+#endif
    return "N/A";
 }
 
@@ -2001,6 +2004,10 @@ static enum retro_hw_context_type hw_render_context_type(const char *s)
 #ifdef HAVE_D3D12
    if (string_is_equal(s, "d3d12"))
       return RETRO_HW_CONTEXT_D3D12;
+#endif
+#ifdef HAVE_GCM
+   if (string_is_equal(s, "rsx"))
+      return RETRO_HW_CONTEXT_RSX;
 #endif
    return RETRO_HW_CONTEXT_NONE;
 }
@@ -3875,9 +3882,12 @@ bool video_driver_set_rotation(unsigned rotation)
     * blocking command, so the video thread observes the new snapshot
     * before it can act on the new rotation. */
    video_driver_publish_vp_params();
-   if (!vid || !vid->set_rotation || !video_st->data)
+   if (!vid || !vid->set_rotation)
       return false;
-   vid->set_rotation(video_st->data, rotation);
+   /* No instance yet (a core's SET_ROTATION from retro_load_game):
+    * video_driver_init_internal() applies retroarch_get_rotation(). */
+   if (video_st->data)
+      vid->set_rotation(video_st->data, rotation);
    return true;
 }
 
@@ -4156,6 +4166,12 @@ unsigned video_driver_headset_view_toggle(void)
    }
 #endif
    return VIDEO_HEADSET_VIEW_LAST;
+}
+
+void video_driver_headset_edit(bool editing, unsigned seq)
+{
+   video_driver_st.headset_editing  = editing;
+   video_driver_st.headset_edit_seq = seq;
 }
 
 void video_driver_headset_exit_request(void)
@@ -5594,13 +5610,16 @@ bool video_driver_find_driver(
       {
          switch (rdr_type)
          {
+#ifdef HAVE_GCM
+            case RETRO_HW_CONTEXT_RSX:
+#endif
             case RETRO_HW_CONTEXT_OPENGL_CORE:
             case RETRO_HW_CONTEXT_VULKAN:
             case RETRO_HW_CONTEXT_D3D9:
             case RETRO_HW_CONTEXT_D3D10:
             case RETRO_HW_CONTEXT_D3D11:
             case RETRO_HW_CONTEXT_D3D12:
-#if defined(HAVE_VULKAN) || defined(HAVE_D3D9) || defined(HAVE_D3D10) || defined(HAVE_D3D11) || defined(HAVE_D3D12) || defined(HAVE_OPENGL_CORE)
+#if defined(HAVE_VULKAN) || defined(HAVE_D3D9) || defined(HAVE_D3D10) || defined(HAVE_D3D11) || defined(HAVE_D3D12) || defined(HAVE_OPENGL_CORE) || defined(HAVE_GCM)
                RARCH_LOG("[Video] Using HW render, %s driver forced.\n",
                      rdr_context_name);
 
@@ -5722,6 +5741,10 @@ bool video_driver_is_hw_context(void)
 
 bool video_driver_render_context_is_main_thread_only(void)
 {
+#ifdef HAVE_GCM
+   if (video_driver_st.hw_render.context_type == RETRO_HW_CONTEXT_RSX)
+      return true;
+#endif
 #if TARGET_OS_IPHONE
    /* The iOS Cocoa GL/GLES backends ("gl", "glcore") render through a
     * GLKView, whose drawable and backing CAEAGLLayer may only be touched
@@ -6084,6 +6107,13 @@ enum video_texture_update video_driver_texture_import(uintptr_t *id,
 #endif
    if (!id || !frame || !poke || !poke->import_texture || !video_st->data)
       return VIDEO_TEXTURE_UPDATE_REFUSED;
+   if (*id && poke->prepare_import_texture)
+   {
+      enum video_texture_update result = poke->prepare_import_texture(
+            video_st->data, *id, frame);
+      if (result != VIDEO_TEXTURE_UPDATE_DONE)
+         return result;
+   }
    return poke->import_texture(video_st->data, id, frame, filter);
 }
 
@@ -6818,6 +6848,39 @@ void video_driver_ff_frameskip_decide(retro_time_t now)
    video_st->ff_last_time = now;
 }
 
+static void video_driver_headset_screens(const settings_t *settings,
+      video_screen_xr_t *screens)
+{
+   unsigned i;
+   for (i = 0; i < RETRO_VIDEO_VIEWS_MAX; i++)
+   {
+      video_screen_xr_t *screen = &screens[i];
+      screen->x       = settings->floats.video_screen_xr_x[i];
+      screen->y       = settings->floats.video_screen_xr_y[i];
+      screen->z       = settings->floats.video_screen_xr_z[i];
+      screen->yaw     = settings->floats.video_screen_xr_yaw[i];
+      screen->pitch   = settings->floats.video_screen_xr_pitch[i];
+      screen->roll    = settings->floats.video_screen_xr_roll[i];
+      screen->scale   = settings->floats.video_screen_xr_scale[i];
+      screen->visible = settings->bools.video_screen_xr_visible[i];
+      video_views_xr_normalize(screen);
+   }
+}
+
+static void video_driver_headset_menu(const settings_t *settings,
+      video_screen_xr_t *menu)
+{
+   menu->x       = settings->floats.video_openxr_menu_xr_x;
+   menu->y       = settings->floats.video_openxr_menu_xr_y;
+   menu->z       = settings->floats.video_openxr_menu_xr_z;
+   menu->yaw     = settings->floats.video_openxr_menu_xr_yaw;
+   menu->pitch   = settings->floats.video_openxr_menu_xr_pitch;
+   menu->roll    = settings->floats.video_openxr_menu_xr_roll;
+   menu->scale   = settings->floats.video_openxr_menu_xr_scale;
+   menu->visible = true;
+   video_views_xr_normalize(menu);
+}
+
 void video_driver_build_info(video_frame_info_t *video_info)
 {
    video_viewport_settings_t *custom_vp             = NULL;
@@ -6856,6 +6919,8 @@ void video_driver_build_info(video_frame_info_t *video_info)
 #else
    video_info->widgets_active              = false;
 #endif
+   /* Answered at the frame call, by whichever thread draws it */
+   video_info->widgets_visible             = false;
 #ifdef HAVE_MENU
    video_info->notifications_hidden        = settings->bools.notification_show_when_menu_is_alive
          && !(menu_st->flags & MENU_ST_FLAG_ALIVE);
@@ -6874,10 +6939,16 @@ void video_driver_build_info(video_frame_info_t *video_info)
    video_info->bfi_dark_frames             = settings->uints.video_bfi_dark_frames;
    video_info->shader_subframes            = video_st->headset_interval
       ? 1 : settings->uints.video_shader_subframes;
+   video_driver_headset_screens(settings, video_info->headset_screens);
+   video_driver_headset_menu(settings, &video_info->headset_menu);
+   video_info->headset_menu_placed         = settings->bools.video_openxr_menu_placed;
+   video_info->headset_menu_follow         = settings->bools.video_openxr_menu_follow;
    video_info->headset_distance            = settings->floats.video_openxr_distance;
    video_info->headset_width               = settings->floats.video_openxr_width;
    video_info->headset_placement           = settings->uints.video_openxr_placement;
    video_info->headset_recenter            = video_st->headset_recenter;
+   video_info->headset_edit_seq            = video_st->headset_edit_seq;
+   video_info->headset_editing             = video_st->headset_editing;
    video_info->headset_interval            = video_st->headset_interval;
    video_info->headset_request_hz          = video_st->headset_request_hz;
    video_info->screen_layout               = settings->uints.video_screen_layout;
@@ -7800,6 +7871,11 @@ void video_driver_set_window_refresh_rate(float hz)
    video_driver_st.window_refresh_known = false;
 }
 
+float video_driver_get_core_hz(void)
+{
+   return video_driver_st.core_hz;
+}
+
 float video_driver_get_refresh_rate(void)
 {
    float rate;
@@ -8010,6 +8086,7 @@ void video_driver_vr_driver_changed(void)
 bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled)
 {
    video_info_t video;
+   bool defer_unthreaded_init = false;
    unsigned scale, width, height;
 #ifdef HAVE_VIDEO_FILTER
    bool frame_rgb32;
@@ -8032,6 +8109,10 @@ bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled)
 #endif
 
    video_st->movie_refused = false;
+#if defined(HAVE_SLANG) && defined(HAVE_GLSLANG)
+   /* before the video thread and the shader tasks exist */
+   glslang_process_init();
+#endif
    /* Bound before any driver or wrapper exists: under threaded video
     * the OSD fonts live on the video thread, and the font driver
     * reaches ra-video state through this capture, not the getter. */
@@ -8254,6 +8335,9 @@ bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled)
                "unthreaded for this session.\n");
    }
 
+#if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
+   defer_unthreaded_init = !video.is_threaded && video_thread_host_is_held();
+#endif
    if (video.is_threaded)
    {
       bool ret;
@@ -8278,7 +8362,7 @@ bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled)
          return false;
       }
    }
-   else
+   else if (!defer_unthreaded_init)
 #endif
       video_st->data = video_st->current_video->init(&video);
 
@@ -8289,6 +8373,10 @@ bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled)
 #endif
    /* and so does a Windows one */
    VIDEO_WIN32_RELEASE_KEPT_WINDOW();
+
+   /* Activation must not wait on the retained window's sleeping thread. */
+   if (defer_unthreaded_init)
+      video_st->data = video_st->current_video->init(&video);
 
    if (!video_st->data)
    {
@@ -9693,6 +9781,16 @@ void video_driver_frame(const void *data, unsigned width,
       else if (widgets_active
             && retro_atomic_load_relaxed_int(&p_dispwidget->worker))
          gfx_widgets_status_text_to_frame(&video_info, status_text);
+#endif
+#ifdef HAVE_GFX_WIDGETS
+      /* Under the wrapper the video thread answers this once it has
+       * laid the widgets out */
+      if (widgets_active
+#ifdef HAVE_THREADS
+            && !video_st->thread_wrapper_active
+#endif
+         )
+         video_info.widgets_visible = gfx_widgets_visible(&video_info);
 #endif
 /* The text this frame draws is drawn inside the driver's frame -
  * on the video thread when it is threaded, which marks the frame

@@ -681,6 +681,9 @@ typedef struct video_frame_info
    bool video_wiiu_prefer_drc;
 #endif
    bool widgets_active;
+   /* gfx_widgets_visible() for this frame, answered once on the thread
+    * that draws the widgets: whether the frame carries any of them */
+   bool widgets_visible;
    bool notifications_hidden;
    bool menu_mouse_enable;
    bool input_menu_swap_ok_cancel_buttons;
@@ -786,6 +789,10 @@ typedef struct video_frame_info
     * none, or no views are presented. Owned by video_driver_state_t,
     * or under the threaded wrapper by the frame's slot. */
    const video_windows_frame_t *windows;
+   /* Each screen's placement from its menu rows, normalized. */
+   video_screen_xr_t headset_screens[RETRO_VIDEO_VIEWS_MAX];
+   /* The menu's own place, used once headset_menu_placed. */
+   video_screen_xr_t headset_menu;
    /* Headset output: the screens' distance and width in metres, where
     * they are kept (enum video_openxr_placement), and a count of
     * recenter requests the driver compares with the last it saw. */
@@ -793,6 +800,9 @@ typedef struct video_frame_info
    float headset_width;
    unsigned headset_placement;
    unsigned headset_recenter;
+   /* Edit mode's count of let-go grabs: a quad set planned with it
+    * shows them where the hands left them. */
+   unsigned headset_edit_seq;
    /* Each core frame shows for this many headset frames and waits for
     * them in place of the window's vsync; 0 while the window paces. */
    unsigned headset_interval;
@@ -800,8 +810,13 @@ typedef struct video_frame_info
    float headset_request_hz;
    unsigned screen_layout;
    bool stereo_swap_eyes;
+   bool headset_menu_placed;
+   /* An unplaced menu opens in front of screen 1, not at its spot. */
+   bool headset_menu_follow;
    /* The last frame sent again (paused, menu), not a new core frame. */
    bool frame_repeat;
+   /* Edit mode moves the headset's items: the menu's quad stays up. */
+   bool headset_editing;
    /* The tracked eyes' views, which the headset shows as its
     * projection; -1 while it shows none. */
    int headset_eye[2];
@@ -1046,6 +1061,11 @@ enum video_device_api
    VIDEO_DEVICE_METAL
 };
 
+enum video_device_recording_cap
+{
+   VIDEO_DEVICE_CAP_ANDROID_CAPTURE_INTEROP = 1
+};
+
 typedef struct video_device_info
 {
    enum video_device_api api;
@@ -1056,14 +1076,17 @@ typedef struct video_device_info
    void *instance;
    void *physical_device;
    void *device;
-   /* D3D12's immutable render queue, borrowed with the device. */
+   /* Vulkan or D3D12 render queue, borrowed with the device. */
    void *queue;
+   /* Existing Vulkan queue serialization; cold render-owner jobs only. */
+   void *queue_lock;
    retro_proc_address_t get_instance_proc_addr;
    /* The driver's queue family: an image the driver imports is either
     * exclusive to it or shared with it (concurrent). */
    unsigned queue_family;
    /* image_pixfmt bits import_texture takes; 0 when it takes none. */
    uint32_t import_formats;
+   uint32_t recording_caps;
 } video_device_info_t;
 
 /* A frame that lives on the driver's device; handles are given as
@@ -1433,6 +1456,9 @@ typedef struct video_poke_interface
    bool (*driver_pacing_wait)(void *data, uint64_t frame_id,
          uint64_t next_id, unsigned max_wait_us);
    void (*driver_pacing_mark)(void *data, uint64_t frame_id, unsigned marker);
+   /* Cold owner-thread preparation; all results retain the source lease. */
+   enum video_texture_update (*prepare_import_texture)(void *data, uintptr_t id,
+         const video_frame_import_t *frame);
 } video_poke_interface_t;
 
 /* dims is the frame's size, VIDEO_SCALE_PACK'd; msg is for showing a
@@ -2059,6 +2085,8 @@ typedef struct
    /* enum video_headset_view: the Headset View hotkey's choice, reset
     * when content closes. */
    unsigned headset_view;
+   /* Edit mode's let-go grabs, counted, main thread. */
+   unsigned headset_edit_seq;
    /* The headset's runtime asked RetroArch to exit (OpenXR EXITING). */
    retro_atomic_int_t headset_exit;
    /* Headset pacing, main thread, never saved: the headset's measured
@@ -2077,6 +2105,7 @@ typedef struct
    double headset_notice_fps;
    unsigned headset_notice_hz;
    bool headset_vsync;
+   bool headset_editing;
    /* Set while video_driver_cached_frame() sends the last frame again. */
    bool frame_repeat;
 #ifdef HAVE_VIDEO_WINDOWS
@@ -2497,6 +2526,9 @@ void video_driver_headset_recenter(void);
  * video_headset_view and return it; VIDEO_HEADSET_VIEW_LAST, unchanged,
  * without a presenting headset. */
 unsigned video_driver_headset_view_toggle(void);
+/* Main thread: the headset's edit mode, on or off, and its count of
+ * let-go grabs, for the next frame snapshot. */
+void video_driver_headset_edit(bool editing, unsigned seq);
 /* Any thread: the headset's runtime asked RetroArch to exit. */
 void video_driver_headset_exit_request(void);
 
@@ -2838,6 +2870,9 @@ void video_shader_driver_set_parameter(struct video_shader *live_shader,
       unsigned index, float value);
 
 float video_driver_get_refresh_rate(void);
+
+/* The frame rate the core declared, 0 before one did */
+float video_driver_get_core_hz(void);
 
 /**
  * video_driver_get_window_refresh_rate:

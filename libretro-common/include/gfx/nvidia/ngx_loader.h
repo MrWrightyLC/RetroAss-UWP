@@ -83,8 +83,11 @@ typedef int ngx_result_t;
 /* NVSDK_NGX_Version_API this interface restates */
 #define NGX_VERSION_API 0x0000015
 
-/* NVSDK_NGX_Feature */
+/* NVSDK_NGX_Feature: DLSS Super Resolution, and DLSS Neural Rendering
+ * (DLSS 5, nvngx_dlssnr.dll), which NGX cores older than its driver
+ * answer with NGX_RESULT_FAIL_OUT_OF_DATE */
 #define NGX_FEATURE_SUPER_SAMPLING 1
+#define NGX_FEATURE_DLSS_NR        18
 
 /* NVSDK_NGX_EngineType */
 #define NGX_ENGINE_TYPE_CUSTOM 0
@@ -100,20 +103,50 @@ enum ngx_perf_quality
    NGX_PERF_QUALITY_DLAA
 };
 
-/* NVSDK_NGX_DLSS_Hint_Render_Preset: the ones an application picks
- * (the others are deprecated or revert to the default) */
+/* NVSDK_NGX_DLSS_Hint_Render_Preset: the letters as the SDK numbers
+ * them. A letter the loaded feature library does not know reverts to
+ * its default; A to G are the CNN models (DLSS 3), J and K the
+ * transformer models (DLSS 310.x), the rest the runtime's to define. */
 enum ngx_dlss_render_preset
 {
    NGX_DLSS_PRESET_DEFAULT = 0,
+   NGX_DLSS_PRESET_A       = 1,
+   NGX_DLSS_PRESET_B       = 2,
+   NGX_DLSS_PRESET_C       = 3,
+   NGX_DLSS_PRESET_D       = 4,
+   NGX_DLSS_PRESET_E       = 5,
+   NGX_DLSS_PRESET_F       = 6,
+   NGX_DLSS_PRESET_G       = 7,
+   NGX_DLSS_PRESET_H       = 8,
+   NGX_DLSS_PRESET_I       = 9,
    NGX_DLSS_PRESET_J       = 10,   /* transformer: less ghosting, some flicker */
-   NGX_DLSS_PRESET_K       = 11    /* transformer: the default of DLAA, Quality, Balanced */
+   NGX_DLSS_PRESET_K       = 11,   /* transformer: the default of DLAA, Quality, Balanced */
+   NGX_DLSS_PRESET_L       = 12,
+   NGX_DLSS_PRESET_M       = 13,
+   NGX_DLSS_PRESET_N       = 14,
+   NGX_DLSS_PRESET_O       = 15,
+   NGX_DLSS_PRESET_LAST
 };
 
 /* A mode as the frontend passes it, one word: the quality (an
- * ngx_perf_quality) and the render preset */
+ * ngx_perf_quality), the render preset, and the sharpness in percent
+ * (the Sharpness parameter: honoured by DLSS 2.5.0 and older, and by
+ * OptiScaler's RCAS; later DLSS ignores it) */
 #define NGX_MODE_PACK(quality, preset) ((unsigned)(quality) | ((unsigned)(preset) << 8))
+#define NGX_MODE_PACK_SHARP(quality, preset, sharpness) \
+   (NGX_MODE_PACK(quality, preset) | ((unsigned)(sharpness) << 16))
 #define NGX_MODE_QUALITY(mode)         ((mode) & 0xffu)
-#define NGX_MODE_PRESET(mode)          ((mode) >> 8)
+#define NGX_MODE_PRESET(mode)          (((mode) >> 8) & 0xffu)
+#define NGX_MODE_SHARPNESS(mode)       (((mode) >> 16) & 0xffu)
+#define NGX_MODE_FEATURE(mode)         ((mode) & 0xffffu)   /* what a feature is made for */
+
+/* A feature library's version, major.minor.patch, as
+ * ngx_dlss_feature_version returns it */
+#define NGX_VERSION_PACK(major, minor, patch) \
+   (((uint32_t)(major) << 16) | ((uint32_t)(minor) << 8) | (uint32_t)(patch))
+#define NGX_VERSION_MAJOR(v) ((v) >> 16)
+#define NGX_VERSION_MINOR(v) (((v) >> 8) & 0xffu)
+#define NGX_VERSION_PATCH(v) ((v) & 0xffu)
 
 /* NVSDK_NGX_DLSS_Feature_Flags */
 #define NGX_DLSS_FLAG_IS_HDR          (1 << 0)
@@ -151,7 +184,11 @@ enum ngx_dlss_render_preset
 #define NGX_PARAM_PERF_QUALITY   "PerfQualityValue"
 #define NGX_PARAM_JITTER_OFFSET_X "Jitter.Offset.X"
 #define NGX_PARAM_JITTER_OFFSET_Y "Jitter.Offset.Y"
-#define NGX_PARAM_TRANSPARENCY_MASK "TransparencyMask"
+/* The mask of pixels to take from this frame over the history
+ * (particles, translucency): "TransparencyMask" is reserved, unread */
+#define NGX_PARAM_BIAS_CURRENT_COLOR_MASK   "DLSS.Input.Bias.Current.Color.Mask"
+#define NGX_PARAM_BIAS_CURRENT_COLOR_BASE_X "DLSS.Input.Bias.Current.Color.Subrect.Base.X"
+#define NGX_PARAM_BIAS_CURRENT_COLOR_BASE_Y "DLSS.Input.Bias.Current.Color.Subrect.Base.Y"
 #define NGX_PARAM_EXPOSURE_TEXTURE  "ExposureTexture"
 #define NGX_PARAM_DLSS_CREATE_FLAGS "DLSS.Feature.Create.Flags"
 /* The render preset a mode uses (ngx_dlss_render_preset), one hint a mode */
@@ -190,6 +227,35 @@ enum ngx_dlss_render_preset
 #define NGX_PARAM_DLSS_HINT_PRESET_BALANCED    "DLSS.Hint.Render.Preset.Balanced"
 #define NGX_PARAM_DLSS_HINT_PRESET_PERFORMANCE "DLSS.Hint.Render.Preset.Performance"
 #define NGX_PARAM_DLSS_HINT_PRESET_ULTRA_PERFORMANCE "DLSS.Hint.Render.Preset.UltraPerformance"
+
+/* DLSS Neural Rendering's parameters. The capability set says whether
+ * it is there (a core without it has no such key); the model's tuning
+ * is read when the feature is created, the rest at every evaluate. */
+#define NGX_PARAM_DLSSNR_AVAILABLE       "DLSSNR.Available"
+#define NGX_PARAM_DLSSNR_FEATURE_INIT_RESULT "DLSSNR.FeatureInitResult"
+#define NGX_PARAM_DLSSNR_ENABLED         "DLSSNR.Enabled"
+#define NGX_PARAM_DLSSNR_WIDTH           "DLSSNR.Width"
+#define NGX_PARAM_DLSSNR_HEIGHT          "DLSSNR.Height"
+#define NGX_PARAM_DLSSNR_PRESET          "DLSSNR.Hint.Render.Preset"
+#define NGX_PARAM_DLSSNR_STYLE           "DLSSNR.Style"
+#define NGX_PARAM_DLSSNR_INTENSITY       "DLSSNR.Intensity"
+#define NGX_PARAM_DLSSNR_LOCAL_STRUCTURE "DLSSNR.LocalStructureStrength"
+#define NGX_PARAM_DLSSNR_LOCAL_TONE      "DLSSNR.LocalToneStrength"
+#define NGX_PARAM_DLSSNR_SKIN_STRUCTURE  "DLSSNR.SkinStructureStrength"
+#define NGX_PARAM_DLSSNR_AUTO_MASK       "DLSSNR.UseAutoMask"
+#define NGX_PARAM_DLSSNR_COLOR           "DLSSNR.Color"
+#define NGX_PARAM_DLSSNR_DEPTH           "DLSSNR.Depth"
+#define NGX_PARAM_DLSSNR_MVEC            "DLSSNR.MVec"
+#define NGX_PARAM_DLSSNR_OUTPUT          "DLSSNR.Output"
+#define NGX_PARAM_DLSSNR_DEPTH_INVERTED  "DLSSNR.DepthInverted"
+#define NGX_PARAM_DLSSNR_RESET           "DLSSNR.Reset"
+#define NGX_PARAM_DLSSNR_MVEC_SCALE_X    "DLSSNR.MVecScaleX"
+#define NGX_PARAM_DLSSNR_MVEC_SCALE_Y    "DLSSNR.MVecScaleY"
+/* Each resource's subrect: base x and y, width and height */
+#define NGX_PARAM_DLSSNR_COLOR_SUBRECT   "DLSSNR.ColorSubrect"
+#define NGX_PARAM_DLSSNR_DEPTH_SUBRECT   "DLSSNR.DepthSubrect"
+#define NGX_PARAM_DLSSNR_MVEC_SUBRECT    "DLSSNR.MVecSubrect"
+#define NGX_PARAM_DLSSNR_OUTPUT_SUBRECT  "DLSSNR.OutputSubrect"
 
 /* A Vulkan proc-address getter (PFN_vkGetInstanceProcAddr,
  * PFN_vkGetDeviceProcAddr), cast to this */
@@ -343,6 +409,8 @@ typedef struct ngx_d3d12_api
  * buffer and the two proc-address getters are Vulkan's own handles. */
 typedef struct ngx_vulkan_api
 {
+   /* NULL where the library has only the two feature requirement
+    * calls after it, which then are both set */
    ngx_result_t (NGX_CONV *required_extensions)(unsigned *instance_count,
          const char ***instance_exts, unsigned *device_count,
          const char ***device_exts);
@@ -410,6 +478,62 @@ const char *ngx_lib_status(void);
  * (nvngx_dlss.dll on Windows, libnvidia-ngx-dlss.so.* on Linux), the
  * file the user supplies. Needs no NGX. */
 bool ngx_dlss_feature_in(const char *dir);
+
+/* The version of the feature library in @dir (NGX_VERSION_PACK): on
+ * Windows its file version, on Linux its file name's; else what its
+ * NVSDK_NGX_GetSnippetVersion says. 0 where there is none, or it does
+ * not say. Loading the library for the export keeps it loaded (NGX
+ * loads the same file from the directory later). */
+uint32_t ngx_dlss_feature_version(const char *dir);
+
+/* Whether @dir holds the DLSS Neural Rendering feature library
+ * (nvngx_dlssnr.dll; libnvidia-ngx-dlssnr.so.* on Linux), and its
+ * version (its file version, on Linux its file name's; 0 where there
+ * is none or it does not say). The library is never loaded for it. */
+bool ngx_dlssnr_feature_in(const char *dir);
+uint32_t ngx_dlssnr_feature_version(const char *dir);
+
+/* NVSDK_NGX_GetSnippetVersion's word as NGX_VERSION_PACK: major in the
+ * high half, minor and patch a byte each below it */
+uint32_t ngx_snippet_version(uint32_t snippet);
+
+/* Whether the NGX core library the probe found is OptiScaler standing
+ * in for it (its module says so, on Windows); the status names its
+ * version. Valid after ngx_lib_get(). */
+bool ngx_lib_is_optiscaler(void);
+
+/* OptiScaler's own file name. Put in the DLSS directory it is loaded
+ * ahead of the NGX core library, which it then hooks and answers for,
+ * instead of standing beside the executable under a system DLL's name.
+ * Windows only. */
+#define NGX_STAND_IN_NAME "OptiScaler.dll"
+
+/* Whether @dir holds NGX_STAND_IN_NAME; needs no NGX, loads nothing */
+bool ngx_stand_in_in(const char *dir);
+
+/* Loads NGX_STAND_IN_NAME from @dir, kept loaded: only before
+ * ngx_lib_get() has loaded the core library. True once it is in. */
+bool ngx_lib_load_stand_in(const char *dir);
+
+/* Keeps the feature libraries NGX has loaded from @dir (DLSS's, Neural
+ * Rendering's) loaded until the process ends, so that NGX made again on
+ * another device finds them in instead of loading them again. Call
+ * after a feature is made; loads nothing itself. */
+void ngx_lib_keep_features(const char *dir);
+
+/* Whether there is an NGX core library to load (NGX_PRESENT_FOUND)
+ * and whether it is OptiScaler (NGX_PRESENT_OPTISCALER), as a status
+ * shows it. On Windows the file is found and read without loading it:
+ * a stand-in hooks the process once loaded. */
+#define NGX_PRESENT_FOUND      0x1u
+#define NGX_PRESENT_OPTISCALER 0x2u
+unsigned ngx_lib_present(void);
+
+/* Whether the parameter table @p (the capability parameters, or any
+ * allocated) came from OptiScaler: its tables carry the "OptiScaler"
+ * key. Catches OptiScaler reached through a proxy of another name
+ * too. */
+bool ngx_params_from_optiscaler(const ngx_lib_t *lib, ngx_parameter_t *p);
 
 /* @utf8 as the wide string NGX takes for its paths, into @out of
  * @out_chars (wchar_t), always terminated; false, and @out empty, when

@@ -56,22 +56,36 @@ static bool load_vulkan(void) { return true; }
 #include "../../../gfx/common/vulkan_upscaler.h"
 #include <file/file_path.h>
 #include "fake_ngx.h"
+
+extern float stub_core_hz;
 #include "../../../libretro-common/samples/gfx/amd/fake_ffx.h"
 #include "../../../libretro-common/samples/gfx/intel/fake_xess.h"
 
-/* The DLSS runtime in @dir: an empty file with the runtime's name */
+/* The DLSS runtime in @dir: the stand-in feature library built beside
+ * the test, under the runtime's name, so its version can be read */
 static void plant_dlss_runtime(const char *dir)
 {
    char path[256];
-   FILE *f;
+   char buf[4096];
+   FILE *in, *out;
+   size_t n;
    path_mkdir(dir);
 #if defined(_WIN32)
+   in = fopen("nvngx_dlss.dll", "rb");
    snprintf(path, sizeof(path), "%s/nvngx_dlss.dll", dir);
 #else
-   snprintf(path, sizeof(path), "%s/libnvidia-ngx-dlss.so.1", dir);
+   in = fopen("libnvidia-ngx-dlss.so.310.2.1", "rb");
+   snprintf(path, sizeof(path), "%s/libnvidia-ngx-dlss.so.310.2.1", dir);
 #endif
-   if ((f = fopen(path, "wb")))
-      fclose(f);
+   if (!in)
+      return;
+   if ((out = fopen(path, "wb")))
+   {
+      while ((n = fread(buf, 1, sizeof(buf), in)) > 0)
+         fwrite(buf, 1, n, out);
+      fclose(out);
+   }
+   fclose(in);
 }
 
 /* ...and none there (a run before may have left one) */
@@ -80,13 +94,55 @@ static void clear_dlss_runtime(const char *dir)
    char path[256];
 #if defined(_WIN32)
    snprintf(path, sizeof(path), "%s/nvngx_dlss.dll", dir);
+   remove(path);
 #else
    snprintf(path, sizeof(path), "%s/libnvidia-ngx-dlss.so.1", dir);
+   remove(path);
+   snprintf(path, sizeof(path), "%s/libnvidia-ngx-dlss.so.310.2.1", dir);
+   remove(path);
+#endif
+}
+
+/* DLSS Neural Rendering's library: on Linux its version is its file
+ * name's; on Windows its file version, a copy of the DLSS stand-in's */
+static void plant_dlssnr_runtime(const char *dir)
+{
+   char path[256];
+   char buf[4096];
+   FILE *in, *out;
+   size_t n;
+   path_mkdir(dir);
+#if defined(_WIN32)
+   in = fopen("nvngx_dlss.dll", "rb");
+   snprintf(path, sizeof(path), "%s/nvngx_dlssnr.dll", dir);
+#else
+   in = fopen("libnvidia-ngx-dlss.so.310.2.1", "rb");
+   snprintf(path, sizeof(path), "%s/libnvidia-ngx-dlssnr.so.310.8.0", dir);
+#endif
+   if (!in)
+      return;
+   if ((out = fopen(path, "wb")))
+   {
+      while ((n = fread(buf, 1, sizeof(buf), in)) > 0)
+         fwrite(buf, 1, n, out);
+      fclose(out);
+   }
+   fclose(in);
+}
+
+static void clear_dlssnr_runtime(const char *dir)
+{
+   char path[256];
+#if defined(_WIN32)
+   snprintf(path, sizeof(path), "%s/nvngx_dlssnr.dll", dir);
+#else
+   snprintf(path, sizeof(path), "%s/libnvidia-ngx-dlssnr.so.310.8.0", dir);
 #endif
    remove(path);
 }
 
 static int failures;
+static fake_ngx_record_t *record(void);
 static int checks;
 static int validation_errors;
 
@@ -162,6 +218,9 @@ static bool setup_vulkan(void)
    VkCommandPoolCreateInfo pinfo;
    VkCommandBufferAllocateInfo ainfo;
    VkDebugUtilsMessengerCreateInfoEXT minfo;
+   VkValidationFeaturesEXT vfeat;
+   VkValidationFeatureEnableEXT venable[1] = {
+      VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT };
    const char *layers[1]  = { "VK_LAYER_KHRONOS_validation" };
    const char *exts[1]    = { VK_EXT_DEBUG_UTILS_EXTENSION_NAME };
    const char *dev_exts[VULKAN_NGX_MAX_EXTS];
@@ -188,8 +247,17 @@ static bool setup_vulkan(void)
    app.pEngineName        = "RetroArch";
    app.engineVersion      = 0;
    app.apiVersion         = VK_API_VERSION_1_1;
+   /* (with the layer's hazard tracking: a barrier a library's own
+    * stages fall outside of is an error here, not a frame now and then
+    * on a GPU that overlaps them) */
+   vfeat.sType                          = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+   vfeat.pNext                          = NULL;
+   vfeat.enabledValidationFeatureCount  = 1;
+   vfeat.pEnabledValidationFeatures     = venable;
+   vfeat.disabledValidationFeatureCount = 0;
+   vfeat.pDisabledValidationFeatures    = NULL;
    iinfo.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-   iinfo.pNext                   = NULL;
+   iinfo.pNext                   = validation ? &vfeat : NULL;
    iinfo.flags                   = 0;
    iinfo.pApplicationInfo        = &app;
    iinfo.enabledLayerCount       = validation ? 1 : 0;
@@ -245,6 +313,14 @@ static bool setup_vulkan(void)
    num_dev_exts = vulkan_ngx_device_extensions(gpu, vkGetInstanceProcAddr,
          instance, dev_exts, 0, VULKAN_NGX_MAX_EXTS);
    CHECK(num_dev_exts == 1 && !strcmp(dev_exts[0], "VK_KHR_maintenance1"));
+   /* asked through the feature requirement calls, for DLSS: the stand-in,
+    * as OptiScaler, has no NVSDK_NGX_VULKAN_RequiredExtensions */
+   CHECK(record() && record()->ext_feature_id == NGX_FEATURE_SUPER_SAMPLING);
+   {
+      const char *inst[4];
+      CHECK(vulkan_ngx_instance_extensions(inst, 0, 4) == 1
+            && !strcmp(inst[0], "VK_KHR_get_physical_device_properties2"));
+   }
    /* already there: not twice */
    dev_exts[0]  = "VK_KHR_maintenance1";
    num_dev_exts = vulkan_ngx_device_extensions(gpu, vkGetInstanceProcAddr,
@@ -688,10 +764,12 @@ static void test_ffx(settings_t *settings, image_t *color, image_t *mv,
    inputs.flags &= ~RETRO_HW_UPSCALER_RESET;
    in.dims = VIDEO_SCALE_PACK(1280, 720);
 
-   /* HDR inputs: another context, linear color */
+   /* HDR inputs: another context, linear color; the sharpness in the
+    * mode word is FSR's own sharpening */
    inputs.flags |= RETRO_HW_UPSCALER_HDR;
    begin_frame();
-   CHECK(vulkan_upscaler_upscale(up, cmd, &in, &inputs, QUALITY(QUALITY),
+   CHECK(vulkan_upscaler_upscale(up, cmd, &in, &inputs,
+            VIDEO_UPSCALER_MODE_PACK_SHARP(VIDEO_TEMPORAL_UPSCALER_QUALITY_QUALITY, 0, 30),
             VIDEO_SCALE_PACK(1920, 1080), &out));
    end_frame();
    vulkan_upscaler_frame_done(up);
@@ -699,6 +777,8 @@ static void test_ffx(settings_t *settings, image_t *color, image_t *mv,
          && (rec->create[1].flags & FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE)
          && !(rec->create[1].flags & FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE)
          && rec->dispatch[3].flags == 0);
+   CHECK(rec->dispatch[3].sharpening && rec->dispatch[3].sharpness == 0.3f
+         && rec->dispatch[3].render_w == 1280);
    inputs.flags &= ~RETRO_HW_UPSCALER_HDR;
 
    /* A resize: a new context, the old retired after the frames in flight */
@@ -994,6 +1074,359 @@ static void test_xess(settings_t *settings, image_t *color, image_t *mv,
    video_upscaler_detach();
 }
 
+/* A feature library NGX loaded stays loaded past NGX's own unload of
+ * it, so that NGX made again finds it in (a directory of its own: a
+ * loaded library cannot be removed on Windows) */
+static void test_keep_features(void)
+{
+#if defined(_WIN32)
+   HMODULE m;
+   plant_dlss_runtime("Zdir_keep");
+   CHECK(GetModuleHandleA("nvngx_dlss.dll") == NULL);
+   m = LoadLibraryA("Zdir_keep\\nvngx_dlss.dll");
+   CHECK(m != NULL);
+   ngx_lib_keep_features("Zdir_keep");
+   if (m)
+      FreeLibrary(m);
+   CHECK(GetModuleHandleA("nvngx_dlss.dll") != NULL);
+#else
+   void *m;
+   const char *path = "Zdir_keep/libnvidia-ngx-dlss.so.310.2.1";
+   plant_dlss_runtime("Zdir_keep");
+   CHECK(dlopen(path, RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD) == NULL);
+   m = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+   CHECK(m != NULL);
+   ngx_lib_keep_features("Zdir_keep");
+   if (m)
+      dlclose(m);
+   CHECK(dlopen(path, RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD) != NULL);
+#endif
+}
+
+/* A frame below its mode's range but in another's runs in that mode,
+ * the nearest taking it, and back; one no mode takes is refused */
+static void test_mode_for(image_t *color, image_t *mv, image_t *depth)
+{
+   fake_ngx_record_t *rec = record();
+   vulkan_ngx_t *ngx;
+   vulkan_ngx_image_t in, out;
+   struct retro_hw_upscaler_inputs inputs;
+   unsigned creates, evals;
+
+   ngx = vulkan_ngx_init(instance, gpu, device, vkGetInstanceProcAddr,
+         vkGetDeviceProcAddr, &mem_props, "Zdir");
+   CHECK(ngx != NULL);
+   if (!ngx)
+      return;
+   memset(&inputs, 0, sizeof(inputs));
+   set_input(&inputs.motion_vectors, mv);
+   set_input(&inputs.depth, depth);
+   in.image  = color->image;
+   in.view   = color->view;
+   in.layout = color->layout;
+   in.format = color->format;
+   creates   = rec->creates;
+   evals     = rec->evals;
+
+   in.dims   = VIDEO_SCALE_PACK(400, 225);
+   begin_frame();
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
+            VIDEO_SCALE_PACK(1920, 1080), &out));
+   end_frame();
+   vulkan_ngx_frame_done(ngx);
+   CHECK(rec->creates == creates + 1 && rec->evals == evals + 1);
+   CHECK(rec->create[creates % FAKE_NGX_MAX].quality == NGX_PERF_QUALITY_ULTRA_PERFORMANCE
+         && rec->create[creates % FAKE_NGX_MAX].width == 1920);
+   CHECK(rec->eval[evals % FAKE_NGX_MAX].subrect_w == 400
+         && rec->eval[evals % FAKE_NGX_MAX].subrect_h == 225);
+
+   in.dims   = VIDEO_SCALE_PACK(1280, 720);
+   begin_frame();
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
+            VIDEO_SCALE_PACK(1920, 1080), &out));
+   end_frame();
+   vulkan_ngx_frame_done(ngx);
+   CHECK(rec->creates == creates + 2
+         && rec->create[(creates + 1) % FAKE_NGX_MAX].quality == NGX_PERF_QUALITY_MAX_QUALITY);
+
+   in.dims   = VIDEO_SCALE_PACK(200, 112);
+   begin_frame();
+   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
+            VIDEO_SCALE_PACK(1920, 1080), &out));
+   end_frame();
+   vulkan_ngx_frame_done(ngx);
+   CHECK(rec->creates == creates + 2 && rec->evals == evals + 2);
+
+   vkDeviceWaitIdle(device);
+   vulkan_ngx_free(ngx);
+}
+
+/* DLSS Neural Rendering over Super Resolution's output: offered only
+ * with its library in the DLSS directory, the settings as one word,
+ * the feature made with the model's tuning and evaluated on Super
+ * Resolution's output with the core's guides, made again only once a
+ * changed setting has held, dropped when turned off, and a core
+ * without it (an older driver) leaving Super Resolution alone */
+/* Frames follow each other on the queue with nothing waited between
+ * them; the library writes its output with whatever stage it likes (the
+ * stand-in clears it through the transfer stage). Two in one command
+ * buffer, as the layer tracks hazards: the barriers around an evaluate
+ * must order the library's work against the frame before, however it
+ * was done */
+static void test_barriers(image_t *color, image_t *mv, image_t *depth)
+{
+   fake_ngx_record_t *rec = record();
+   vulkan_ngx_t *ngx;
+   vulkan_ngx_image_t in, out;
+   struct retro_hw_upscaler_inputs inputs;
+   unsigned evals = rec->evals;
+   int errors     = validation_errors;
+
+   ngx = vulkan_ngx_init(instance, gpu, device, vkGetInstanceProcAddr,
+         vkGetDeviceProcAddr, &mem_props, "Zdir");
+   CHECK(ngx != NULL);
+   if (!ngx)
+      return;
+   memset(&inputs, 0, sizeof(inputs));
+   set_input(&inputs.motion_vectors, mv);
+   set_input(&inputs.depth, depth);
+   in.image  = color->image;
+   in.view   = color->view;
+   in.layout = color->layout;
+   in.format = color->format;
+   in.dims   = VIDEO_SCALE_PACK(1280, 720);
+
+   begin_frame();
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
+            VIDEO_SCALE_PACK(1920, 1080), &out));
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
+            VIDEO_SCALE_PACK(1920, 1080), &out));
+   end_frame();
+   vulkan_ngx_frame_done(ngx);
+   CHECK(rec->evals == evals + 2);
+   CHECK(validation_errors == errors);
+
+   vkDeviceWaitIdle(device);
+   vulkan_ngx_free(ngx);
+}
+
+static void test_nr(settings_t *settings, image_t *color, image_t *mv,
+      image_t *depth)
+{
+   fake_ngx_record_t *rec = record();
+   vulkan_ngx_t *ngx;
+   vulkan_ngx_image_t in, out;
+   struct retro_hw_upscaler_inputs inputs;
+   const char *list[8];
+   char status[256];
+   unsigned nr, nr2, creates, evals, releases, i, sr, calls, made;
+#if defined(_WIN32)
+   const uint32_t version = NGX_VERSION_PACK(310, 2, 1);
+   const char *expect = "DLSS (NGX: found, DLSS runtime 310.2.1, Neural Rendering 310.2.1)";
+#else
+   const uint32_t version = NGX_VERSION_PACK(310, 8, 0);
+   const char *expect = "DLSS (NGX: found, DLSS runtime 310.2.1, Neural Rendering 310.8.0)";
+#endif
+
+   settings->uints.video_temporal_upscaler = VIDEO_TEMPORAL_UPSCALER_DLSS;
+   clear_dlssnr_runtime("Zdir");
+   video_upscaler_probe(VIDEO_TEMPORAL_UPSCALER_DLSS);
+   CHECK(!video_upscaler_nr_available());
+   CHECK(video_upscaler_dlssnr_version() == 0);
+   plant_dlssnr_runtime("Zdir");
+   video_upscaler_probe(VIDEO_TEMPORAL_UPSCALER_DLSS);
+   CHECK(video_upscaler_nr_available());
+   CHECK(video_upscaler_dlssnr_version() == version);
+   video_upscaler_status_string(status, sizeof(status));
+   CHECK(!strcmp(status, expect));
+
+   settings->bools.video_dlss_nr_enable          = false;
+   CHECK(video_upscaler_nr_mode() == 0);
+   settings->bools.video_dlss_nr_enable          = true;
+   settings->bools.video_dlss_nr_auto_mask       = true;
+   settings->uints.video_dlss_nr_preset          = 1;
+   settings->uints.video_dlss_nr_style           = 2;
+   settings->uints.video_dlss_nr_intensity       = 100;
+   settings->uints.video_dlss_nr_local_structure = 150;
+   settings->uints.video_dlss_nr_local_tone      = 50;
+   settings->ints.video_dlss_nr_skin_structure   = -5;
+   nr = video_upscaler_nr_mode();
+   CHECK(nr == VIDEO_UPSCALER_NR_PACK(VIDEO_UPSCALER_NR_ON | VIDEO_UPSCALER_NR_AUTO_MASK,
+            1, 2, 20, 30, 10, 0));
+   settings->ints.video_dlss_nr_skin_structure   = 50;
+   CHECK(VIDEO_UPSCALER_NR_SKIN(video_upscaler_nr_mode()) == 11);
+   settings->ints.video_dlss_nr_skin_structure   = -5;
+
+   /* Its device extensions are asked for too, on or off, so that
+    * turning it on needs no new context; the answers kept for the next
+    * one */
+   calls = rec->ext_calls;
+   CHECK(vulkan_ngx_device_extensions(gpu, vkGetInstanceProcAddr, instance,
+            list, 0, 8) >= 1);
+   CHECK(rec->ext_feature_id == 18 && rec->ext_calls == calls + 2);
+   CHECK(vulkan_ngx_device_extensions(gpu, vkGetInstanceProcAddr, instance,
+            list, 0, 8) >= 1);
+   CHECK(rec->ext_calls == calls + 2);
+   settings->bools.video_dlss_nr_enable          = false;
+   CHECK(vulkan_ngx_device_extensions(gpu, vkGetInstanceProcAddr, instance,
+            list, 0, 8) >= 1);
+   CHECK(rec->ext_calls == calls + 2);
+   settings->bools.video_dlss_nr_enable          = true;
+
+   ngx = vulkan_ngx_init(instance, gpu, device, vkGetInstanceProcAddr,
+         vkGetDeviceProcAddr, &mem_props, "Zdir");
+   CHECK(ngx != NULL);
+   if (!ngx)
+      return;
+   memset(&inputs, 0, sizeof(inputs));
+   set_input(&inputs.motion_vectors, mv);
+   set_input(&inputs.depth, depth);
+   inputs.flags      = RETRO_HW_UPSCALER_DEPTH_INVERTED;
+   inputs.mv_scale_x = -2.0f;
+   inputs.mv_scale_y = 3.0f;
+   in.image  = color->image;
+   in.view   = color->view;
+   in.layout = color->layout;
+   in.format = color->format;
+   in.dims   = VIDEO_SCALE_PACK(color->width, color->height);
+
+   /* The first frame: Super Resolution, then the model on its output */
+   creates = rec->creates;
+   evals   = rec->evals;
+   begin_frame();
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, nr,
+            VIDEO_SCALE_PACK(1920, 1080), &out));
+   end_frame();
+   vulkan_ngx_frame_done(ngx);
+   CHECK(rec->creates == creates + 2 && rec->evals == evals + 2);
+   CHECK(rec->create[creates % FAKE_NGX_MAX].feature == 1
+         && rec->create[(creates + 1) % FAKE_NGX_MAX].feature == 18);
+   i = (creates + 1) % FAKE_NGX_MAX;
+   CHECK(rec->create[i].out_width == 1920 && rec->create[i].out_height == 1080
+         && rec->create[i].node_mask == 0x101);
+   CHECK(rec->create[i].nr_preset == 1 && rec->create[i].nr_style == 2
+         && rec->create[i].nr_auto_mask == 1);
+   CHECK(rec->create[i].nr_intensity == 1.0f && rec->create[i].nr_structure == 1.5f
+         && rec->create[i].nr_tone == 0.5f && rec->create[i].nr_skin == -1.0f);
+   sr = evals % FAKE_NGX_MAX;
+   i  = (evals + 1) % FAKE_NGX_MAX;
+   CHECK(!rec->eval[sr].nr && rec->eval[i].nr);
+   CHECK(rec->eval[i].color.present && !rec->eval[i].color.read_write
+         && rec->eval[i].color.image == rec->eval[sr].output.image
+         && rec->eval[i].color.width == 1920);
+   CHECK(rec->eval[i].output.present && rec->eval[i].output.read_write
+         && rec->eval[i].output.image == (uint64_t)(uintptr_t)out.image
+         && rec->eval[i].output.image != rec->eval[sr].output.image
+         && rec->eval[i].output.width == 1920);
+   CHECK(rec->eval[i].depth.image == (uint64_t)(uintptr_t)depth->image
+         && rec->eval[i].motion_vectors.image == (uint64_t)(uintptr_t)mv->image);
+   CHECK(rec->eval[i].subrect_w == 1920 && rec->eval[i].subrect_h == 1080);
+   CHECK(rec->eval[i].depth_w == 1280 && rec->eval[i].depth_h == 720
+         && rec->eval[i].mv_w == 1280 && rec->eval[i].mv_h == 720);
+   CHECK(rec->eval[i].depth_inverted == 1 && rec->eval[i].reset == 1);
+   CHECK(rec->eval[i].mv_scale_x == -2.0f && rec->eval[i].mv_scale_y == 3.0f);
+   CHECK(out.dims == VIDEO_SCALE_PACK(1920, 1080)
+         && out.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+   /* The next frame: the same feature, no reset */
+   begin_frame();
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, nr,
+            VIDEO_SCALE_PACK(1920, 1080), &out));
+   end_frame();
+   vulkan_ngx_frame_done(ngx);
+   CHECK(rec->creates == creates + 2 && rec->eval[(rec->evals - 1) % FAKE_NGX_MAX].nr
+         && rec->eval[(rec->evals - 1) % FAKE_NGX_MAX].reset == 0);
+
+   /* A changed setting: the model made again only once it has held */
+   nr2 = VIDEO_UPSCALER_NR_PACK(VIDEO_UPSCALER_NR_ON, 1, 2, 30, 30, 10, 0);
+   for (i = 0; i < 40 && rec->creates == creates + 2; i++)
+   {
+      begin_frame();
+      CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, nr2,
+               VIDEO_SCALE_PACK(1920, 1080), &out));
+      end_frame();
+      vulkan_ngx_frame_done(ngx);
+   }
+   CHECK(rec->creates == creates + 3 && i >= 25);
+   i = (rec->creates - 1) % FAKE_NGX_MAX;
+   CHECK(rec->create[i].feature == 18 && rec->create[i].nr_intensity == 1.5f
+         && rec->create[i].nr_auto_mask == 0);
+
+   /* Off: Super Resolution's frame, the model kept; on again, the same
+    * model, its history reset once */
+   for (i = 0; i < 30; i++)
+      vulkan_ngx_frame_done(ngx);
+   made     = rec->creates;
+   releases = rec->releases;
+   evals    = rec->evals;
+   begin_frame();
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
+            VIDEO_SCALE_PACK(1920, 1080), &out));
+   end_frame();
+   CHECK(rec->evals == evals + 1 && !rec->eval[evals % FAKE_NGX_MAX].nr
+         && out.image && rec->eval[evals % FAKE_NGX_MAX].output.image
+         == (uint64_t)(uintptr_t)out.image);
+   for (i = 0; i < 30; i++)
+      vulkan_ngx_frame_done(ngx);
+   CHECK(rec->releases == releases);
+   for (i = 0; i < 2; i++)
+   {
+      evals = rec->evals;
+      begin_frame();
+      CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, nr2,
+               VIDEO_SCALE_PACK(1920, 1080), &out));
+      end_frame();
+      vulkan_ngx_frame_done(ngx);
+      CHECK(rec->creates == made && rec->evals == evals + 2
+            && rec->eval[(evals + 1) % FAKE_NGX_MAX].nr
+            && rec->eval[(evals + 1) % FAKE_NGX_MAX].reset == (i == 0));
+   }
+   vkDeviceWaitIdle(device);
+   vulkan_ngx_free(ngx);
+
+   /* Off too, the core is asked about the model, so that turning it on
+    * needs nothing made again: a core without it is found out */
+   settings->bools.video_dlss_nr_enable = false;
+   video_upscaler_note_nr(true);
+   rec->nr_missing = 1;
+   ngx = vulkan_ngx_init(instance, gpu, device, vkGetInstanceProcAddr,
+         vkGetDeviceProcAddr, &mem_props, "Zdir");
+   CHECK(ngx != NULL);
+   if (ngx)
+   {
+      CHECK(!video_upscaler_nr_available());
+      vulkan_ngx_free(ngx);
+   }
+
+   /* A core without the model, as before its driver: not offered, said
+    * so, and Super Resolution goes on */
+   settings->bools.video_dlss_nr_enable = true;
+   ngx = vulkan_ngx_init(instance, gpu, device, vkGetInstanceProcAddr,
+         vkGetDeviceProcAddr, &mem_props, "Zdir");
+   CHECK(ngx != NULL);
+   CHECK(!video_upscaler_nr_available());
+   video_upscaler_status_string(status, sizeof(status));
+   CHECK(strstr(status, "Neural Rendering: needs a newer driver") != NULL);
+   if (ngx)
+   {
+      creates = rec->creates;
+      begin_frame();
+      CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, nr,
+               VIDEO_SCALE_PACK(1920, 1080), &out));
+      end_frame();
+      vulkan_ngx_frame_done(ngx);
+      CHECK(rec->creates == creates + 1
+            && rec->create[creates % FAKE_NGX_MAX].feature == 1);
+      vkDeviceWaitIdle(device);
+      vulkan_ngx_free(ngx);
+   }
+   settings->bools.video_dlss_nr_enable = false;
+   rec->nr_missing = 0;
+   video_upscaler_note_nr(true);
+   clear_dlssnr_runtime("Zdir");
+   video_upscaler_probe(VIDEO_TEMPORAL_UPSCALER_DLSS);
+}
+
 int main(void)
 {
    settings_t *settings = (settings_t*)config_get_ptr();
@@ -1008,10 +1441,28 @@ int main(void)
    unsigned render_dims, min_dims, max_dims;
    unsigned i;
 
+   /* Until a core asks for it, nothing loads the NGX library: not the
+    * log of what the upscaler would find, nor (on Windows, where a
+    * stand-in hooks the process) the status */
+   settings->uints.video_temporal_upscaler = VIDEO_TEMPORAL_UPSCALER_DLSS;
+   CHECK(!video_upscaler_wanted());
+   video_upscaler_log_probe(VIDEO_TEMPORAL_UPSCALER_DLSS);
+   CHECK(video_upscaler_probe(VIDEO_TEMPORAL_UPSCALER_DLSS) & VIDEO_UPSCALER_FOUND_LIBRARY);
+#if defined(_WIN32)
+   CHECK(GetModuleHandleW(L"_nvngx.dll") == NULL);
+#endif
+   video_upscaler_note_wanted();
+   CHECK(video_upscaler_wanted());
+   video_upscaler_clear_wanted();
+   CHECK(!video_upscaler_wanted());
+   video_upscaler_note_wanted();
+   settings->uints.video_temporal_upscaler = 0;
+   test_keep_features();
+
    if (!setup_vulkan())
    {
       printf("vulkan_upscaler_test: no Vulkan device, skipped\n");
-      return 0;
+      return failures ? 1 : 0;
    }
    rec = record();
    CHECK(rec != NULL);
@@ -1028,10 +1479,25 @@ int main(void)
    settings->uints.video_temporal_upscaler = VIDEO_TEMPORAL_UPSCALER_DLSS;
    /* no runtime in the directory: the driver library is never called */
    clear_dlss_runtime("Zdir");
+   CHECK(video_upscaler_probe(VIDEO_TEMPORAL_UPSCALER_DLSS) == VIDEO_UPSCALER_FOUND_LIBRARY);
+   CHECK(video_upscaler_dlss_version() == 0);
    CHECK(vulkan_ngx_init(instance, gpu, device, vkGetInstanceProcAddr,
             vkGetDeviceProcAddr, &mem_props, "Zdir") == NULL);
    CHECK(rec->init_calls == 0);
    plant_dlss_runtime("Zdir");
+   /* The runtime's version, read from its own export before NGX
+    * loads it; the status names it */
+   CHECK(video_upscaler_probe(VIDEO_TEMPORAL_UPSCALER_DLSS) == VIDEO_UPSCALER_READY);
+   CHECK(video_upscaler_dlss_version() == NGX_VERSION_PACK(310, 2, 1));
+   CHECK(video_upscaler_preset_min_version(VIDEO_TEMPORAL_UPSCALER_PRESET_K) <= NGX_VERSION_PACK(310, 2, 1));
+   CHECK(video_upscaler_preset_min_version(VIDEO_TEMPORAL_UPSCALER_PRESET_O) > NGX_VERSION_PACK(310, 2, 1));
+   CHECK(video_upscaler_preset_min_version(VIDEO_TEMPORAL_UPSCALER_PRESET_A) == 0);
+   {
+      char status[256];
+      video_upscaler_status_string(status, sizeof(status));
+      CHECK(!strcmp(status, "DLSS (NGX: found, DLSS runtime 310.2.1)"));
+   }
+   CHECK(!video_upscaler_optiscaler());
    rec->unavailable = 1;
    CHECK(vulkan_ngx_init(instance, gpu, device, vkGetInstanceProcAddr,
             vkGetDeviceProcAddr, &mem_props, "Zdir") == NULL);
@@ -1045,15 +1511,18 @@ int main(void)
    CHECK(rec->init_calls == 2 && rec->init_device == (void*)device);
    CHECK(rec->init_path0 == 'Z');
 
-   /* The mode's sizes, through the capability callback, cached */
+   /* The mode's size and the range over all modes (Ultra Performance's
+    * half of 640x360 the floor), through the capability callback,
+    * asked once a mode */
    CHECK(vulkan_ngx_optimal(ngx, NGX_PERF_QUALITY_MAX_QUALITY,
             VIDEO_SCALE_PACK(1920, 1080), &render_dims, &min_dims, &max_dims));
    CHECK(render_dims == VIDEO_SCALE_PACK(1280, 720)
          && max_dims == VIDEO_SCALE_PACK(1920, 1080)
-         && min_dims == VIDEO_SCALE_PACK(640, 360));
+         && min_dims == VIDEO_SCALE_PACK(320, 180));
+   CHECK(rec->optimal_calls == 6);
    CHECK(vulkan_ngx_optimal(ngx, NGX_PERF_QUALITY_MAX_QUALITY,
             VIDEO_SCALE_PACK(1920, 1080), &render_dims, &min_dims, &max_dims));
-   CHECK(rec->optimal_calls == 1);
+   CHECK(rec->optimal_calls == 6);
    CHECK(!vulkan_ngx_optimal(ngx, NGX_PERF_QUALITY_ULTRA_QUALITY,
             VIDEO_SCALE_PACK(1920, 1080), &render_dims, &min_dims, &max_dims));
    CHECK(!vulkan_ngx_optimal(ngx, NGX_PERF_QUALITY_MAX_QUALITY,
@@ -1072,7 +1541,7 @@ int main(void)
    CHECK(iface->get_request(iface->handle, &req));
    CHECK(req.output_width == 1920 && req.output_height == 1080);
    CHECK(req.render_width == 1280 && req.render_height == 720);
-   CHECK(req.min_render_width == 640 && req.max_render_width == 1920);
+   CHECK(req.min_render_width == 320 && req.max_render_width == 1920);
    CHECK(fabs(req.mip_bias - (log(1280.0 / 1920.0) / log(2.0) - 1.0)) < 1e-5);
    settings->uints.video_temporal_upscaler_quality = VIDEO_TEMPORAL_UPSCALER_QUALITY_PERFORMANCE;
    CHECK(iface->get_request(iface->handle, &req) && req.render_width == 960);
@@ -1132,7 +1601,7 @@ int main(void)
 
    begin_frame();
    memset(&out, 0, sizeof(out));
-   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY,
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
             VIDEO_SCALE_PACK(1920, 1080), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
@@ -1172,27 +1641,40 @@ int main(void)
          && out.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
    /* The next frame: the same feature, no reset, the core's reset
-    * honoured when asked */
+    * honoured when asked; a frame time the core left at 0 is the
+    * period of its frame (DLSS weighs its history by it, 0 is not a
+    * frame) */
+   inputs.frame_time_ms = 0.0f;
+   stub_core_hz         = 50.0f;
    begin_frame();
-   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY,
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
             VIDEO_SCALE_PACK(1920, 1080), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
    CHECK(rec->creates == 1 && rec->evals == 2 && rec->eval[1].reset == 0);
+   CHECK(rec->eval[1].frame_time == 20.0f);
+   inputs.frame_time_ms = 16.6f;
+   stub_core_hz         = 0.0f;
+   /* (and the core's transparency mask reaches DLSS as the mask it
+    * reads, the current color's bias; a stand-in image) */
    inputs.flags |= RETRO_HW_UPSCALER_RESET;
+   set_input(&inputs.transparency_mask, &mv);
    begin_frame();
-   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY,
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
             VIDEO_SCALE_PACK(1920, 1080), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
    CHECK(rec->evals == 3 && rec->eval[2].reset == 1 && rec->creates == 1);
+   CHECK(rec->eval[2].transparency.present
+         && rec->eval[2].transparency.image == (uint64_t)(uintptr_t)mv.image);
    inputs.flags &= ~RETRO_HW_UPSCALER_RESET;
+   memset(&inputs.transparency_mask, 0, sizeof(inputs.transparency_mask));
 
    /* A smaller frame within the range: the same feature, the subrect
     * says the size; one outside: refused */
    in.dims   = VIDEO_SCALE_PACK(960, 540);
    begin_frame();
-   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY,
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
             VIDEO_SCALE_PACK(1920, 1080), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
@@ -1202,7 +1684,7 @@ int main(void)
    in.view   = color_big.view;
    in.dims   = VIDEO_SCALE_PACK(color_big.width, color_big.height);
    begin_frame();
-   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY,
+   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
             VIDEO_SCALE_PACK(1920, 1080), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
@@ -1212,17 +1694,17 @@ int main(void)
    in.dims   = VIDEO_SCALE_PACK(color.width, color.height);
 
    /* No inputs, no motion vectors: refused */
-   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, NULL, NGX_PERF_QUALITY_MAX_QUALITY,
+   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, NULL, NGX_PERF_QUALITY_MAX_QUALITY, 0,
             VIDEO_SCALE_PACK(1920, 1080), &out));
    inputs.motion_vectors.image = 0;
-   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY,
+   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
             VIDEO_SCALE_PACK(1920, 1080), &out));
    set_input(&inputs.motion_vectors, &mv);
 
    /* A resize: a new feature and output, the old retired and released
     * once the frames that could read them are through */
    begin_frame();
-   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY,
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
             VIDEO_SCALE_PACK(2560, 1440), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
@@ -1237,7 +1719,7 @@ int main(void)
 
    /* A mode change makes a new feature too */
    begin_frame();
-   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_BALANCED,
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_BALANCED, 0,
             VIDEO_SCALE_PACK(2560, 1440), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
@@ -1246,20 +1728,20 @@ int main(void)
 
    /* The render preset in the mode word: a new feature with the hint set */
    begin_frame();
-   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, (NGX_MODE_PACK(NGX_PERF_QUALITY_BALANCED, NGX_DLSS_PRESET_K)),
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, (NGX_MODE_PACK(NGX_PERF_QUALITY_BALANCED, NGX_DLSS_PRESET_K)), 0,
             VIDEO_SCALE_PACK(2560, 1440), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
    CHECK(rec->creates == 4 && rec->create[3].quality == NGX_PERF_QUALITY_BALANCED
          && rec->create[3].preset == NGX_DLSS_PRESET_K);
    begin_frame();
-   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, (NGX_MODE_PACK(NGX_PERF_QUALITY_BALANCED, NGX_DLSS_PRESET_K)),
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, (NGX_MODE_PACK(NGX_PERF_QUALITY_BALANCED, NGX_DLSS_PRESET_K)), 0,
             VIDEO_SCALE_PACK(2560, 1440), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
    CHECK(rec->creates == 4);
    begin_frame();
-   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_BALANCED,
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_BALANCED, 0,
             VIDEO_SCALE_PACK(2560, 1440), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
@@ -1269,18 +1751,18 @@ int main(void)
     * alone until something new is asked of it */
    rec->eval_fails = 1;
    begin_frame();
-   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_BALANCED,
+   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_BALANCED, 0,
             VIDEO_SCALE_PACK(2560, 1440), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
    rec->eval_fails = 0;
    begin_frame();
-   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_BALANCED,
+   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_BALANCED, 0,
             VIDEO_SCALE_PACK(2560, 1440), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
    begin_frame();
-   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY,
+   CHECK(vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_QUALITY, 0,
             VIDEO_SCALE_PACK(2560, 1440), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
@@ -1289,7 +1771,7 @@ int main(void)
    /* A feature that will not create: refused, nothing leaks */
    rec->create_fails = 1;
    begin_frame();
-   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_PERF,
+   CHECK(!vulkan_ngx_upscale(ngx, cmd, &in, &inputs, NGX_PERF_QUALITY_MAX_PERF, 0,
             VIDEO_SCALE_PACK(2560, 1440), &out));
    end_frame();
    vulkan_ngx_frame_done(ngx);
@@ -1307,15 +1789,25 @@ int main(void)
    video_upscaler_detach();
    CHECK(video_upscaler_get_interface() == NULL);
 
+   test_mode_for(&color, &mv, &depth);
+   test_barriers(&color, &mv, &depth);
+   test_nr(settings, &color, &mv, &depth);
+
    /* DLSS behind the dispatch: the frontend's mode word translated to
-    * NGX's quality and preset */
+    * NGX's quality, preset and sharpness; the session's tables name
+    * OptiScaler, so the status does */
+   rec->optiscaler = 1;
    {
       vulkan_upscaler_t *up = vulkan_upscaler_init(VIDEO_TEMPORAL_UPSCALER_DLSS,
             instance, gpu, device, vkGetInstanceProcAddr, vkGetDeviceProcAddr,
             &mem_props, "Zdir");
       vulkan_upscaler_image_t din, dout;
       unsigned creates = rec->creates;
+      char status[256];
       CHECK(up != NULL);
+      CHECK(video_upscaler_optiscaler());
+      video_upscaler_status_string(status, sizeof(status));
+      CHECK(!strcmp(status, "DLSS (NGX: found, DLSS runtime 310.2.1, via OptiScaler)"));
       if (up)
       {
          CHECK(vulkan_upscaler_optimal(up,
@@ -1340,6 +1832,17 @@ int main(void)
                && rec->create[creates].out_width == 1920);
          CHECK(dout.dims == VIDEO_SCALE_PACK(1920, 1080)
                && dout.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+         CHECK(rec->eval[(rec->evals - 1) % FAKE_NGX_MAX].sharpness == 0.0f);
+         /* The sharpness rides in the mode word: the same feature,
+          * the parameter set */
+         begin_frame();
+         CHECK(vulkan_upscaler_upscale(up, cmd, &din, &inputs,
+                  VIDEO_UPSCALER_MODE_PACK_SHARP(VIDEO_TEMPORAL_UPSCALER_QUALITY_QUALITY,
+                     VIDEO_TEMPORAL_UPSCALER_PRESET_K, 50),
+                  VIDEO_SCALE_PACK(1920, 1080), &dout));
+         end_frame();
+         vulkan_upscaler_frame_done(up);
+         CHECK(rec->creates == creates + 1 && rec->eval[(rec->evals - 1) % FAKE_NGX_MAX].sharpness == 0.5f);
          vkDeviceWaitIdle(device);
          vulkan_upscaler_free(up);
       }

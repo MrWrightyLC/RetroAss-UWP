@@ -52,6 +52,8 @@ bool	video_scanline_sync	1	0
 bool	video_ctx_scaling	1	0
 bool	netplay_fade_chat	1	1
 bool	netplay_allow_pausing	1	0
+bool	netplay_analog_joypads	1	1
+bool	netplay_lockstep	1	0
 bool	netplay_allow_slaves	1	1
 bool	netplay_require_slaves	1	0
 bool	playlist_entry_rename	1	1
@@ -200,7 +202,10 @@ bool	video_hdr_scanlines	1	1
 bool	video_stereo_swap_eyes	1	0
 bool	video_windows_enable	1	1
 bool	video_openxr_enable	1	0
+bool	video_openxr_menu_follow	1	0
 bool	video_openxr_perf_boost	1	0
+bool	video_openxr_edit_pause	1	0
+bool	video_openxr_edit_snap	1	1
 bool	rewind_enable	1	0
 bool	menu_linear_filter	1	0
 bool	xmb_vertical_thumbnails	1	0
@@ -429,6 +434,7 @@ bool	netplay_request_device_p16	1	0
 bool	input_stylus_enable	1	1
 bool	input_stylus_require_contact_for_click	1	1
 bool	input_stylus_hover_moves_pointer	1	1
+bool	input_stylus_hide_overlay	1	1
 int	custom_viewport_x	0	0
 int	custom_viewport_y	0	0
 int	video_windowed_position_x	1	0
@@ -540,6 +546,7 @@ uint	content_history_size	1	200
 uint	input_menu_toggle_gamepad_combo	1	INPUT_COMBO_NONE
 uint	input_quit_gamepad_combo	1	INPUT_COMBO_NONE
 uint	input_hotkey_block_delay	1	5
+uint	input_hotkey_tap_delay	1	0
 uint	input_assign_ports_keyboard	1	0
 uint	input_rotation	1	0
 uint	input_socd_horizontal	1	0
@@ -573,6 +580,10 @@ uint	video_openxr_refresh_rate	1	0
 uint	video_openxr_placement	1	0
 uint	video_openxr_controllers	1	0
 uint	video_openxr_laser	1	0
+uint	video_openxr_laser_beam	1	1
+uint	video_openxr_edit_snap_angles	1	1
+uint	video_openxr_edit_hinge_gap	1	2
+uint	video_openxr_edit_smoothing	1	2
 uint	rewind_granularity	1	1
 uint	playlist_show_history_icons	1	PLAYLIST_SHOW_HISTORY_ICONS_CONTENT
 uint	rgui_internal_upscale_level	1	RGUI_UPSCALE_NONE
@@ -629,8 +640,11 @@ uint	netplay_input_latency_frames_min	1	0
 uint	netplay_input_latency_frames_range	1	0
 uint	streaming_mode	1	STREAMING_MODE_TWITCH
 uint	input_overlay_abxy_diagonal_sensitivity	1	50
+uint	input_overlay_abxy_method	1	0
 uint	input_overlay_analog_recenter_zone	1	0
+uint	input_overlay_contact_scale	1	100
 uint	input_overlay_dpad_diagonal_sensitivity	1	80
+uint	input_overlay_dpad_method	1	0
 uint	input_overlay_show_inputs	1	OVERLAY_SHOW_INPUT_TOUCHED
 uint	input_overlay_show_inputs_port	1	0
 uint	network_cmd_port	1	55355
@@ -769,6 +783,8 @@ bool	video_scanline_sync	1	0
 bool	video_ctx_scaling	1	0
 bool	netplay_fade_chat	1	1
 bool	netplay_allow_pausing	1	0
+bool	netplay_analog_joypads	1	1
+bool	netplay_lockstep	1	0
 bool	netplay_allow_slaves	1	1
 bool	netplay_require_slaves	1	0
 bool	playlist_entry_rename	1	1
@@ -916,7 +932,10 @@ bool	ozone_collapse_sidebar	1	0
 bool	video_hdr_scanlines	1	1
 bool	video_stereo_swap_eyes	1	0
 bool	video_openxr_enable	1	0
+bool	video_openxr_menu_follow	1	0
 bool	video_openxr_perf_boost	1	0
+bool	video_openxr_edit_pause	1	0
+bool	video_openxr_edit_snap	1	1
 bool	rewind_enable	1	0
 bool	menu_linear_filter	1	0
 bool	xmb_vertical_thumbnails	1	0
@@ -1252,6 +1271,7 @@ uint	content_history_size	1	200
 uint	input_menu_toggle_gamepad_combo	1	INPUT_COMBO_NONE
 uint	input_quit_gamepad_combo	1	INPUT_COMBO_NONE
 uint	input_hotkey_block_delay	1	5
+uint	input_hotkey_tap_delay	1	0
 uint	input_assign_ports_keyboard	1	0
 uint	input_rotation	1	0
 uint	input_socd_horizontal	1	0
@@ -1285,6 +1305,10 @@ uint	video_openxr_refresh_rate	1	0
 uint	video_openxr_placement	1	0
 uint	video_openxr_controllers	1	0
 uint	video_openxr_laser	1	0
+uint	video_openxr_laser_beam	1	1
+uint	video_openxr_edit_snap_angles	1	1
+uint	video_openxr_edit_hinge_gap	1	2
+uint	video_openxr_edit_smoothing	1	2
 uint	rewind_granularity	1	1
 uint	playlist_show_history_icons	1	PLAYLIST_SHOW_HISTORY_ICONS_CONTENT
 uint	rgui_internal_upscale_level	1	RGUI_UPSCALE_NONE
@@ -1338,8 +1362,11 @@ uint	netplay_input_latency_frames_min	1	0
 uint	netplay_input_latency_frames_range	1	0
 uint	streaming_mode	1	STREAMING_MODE_TWITCH
 uint	input_overlay_abxy_diagonal_sensitivity	1	50
+uint	input_overlay_abxy_method	1	0
 uint	input_overlay_analog_recenter_zone	1	0
+uint	input_overlay_contact_scale	1	100
 uint	input_overlay_dpad_diagonal_sensitivity	1	80
+uint	input_overlay_dpad_method	1	0
 uint	input_overlay_show_inputs	1	OVERLAY_SHOW_INPUT_PHYSICAL
 uint	input_overlay_show_inputs_port	1	0
 uint	network_cmd_port	1	55355
@@ -1478,6 +1505,8 @@ bool	video_scanline_sync	1	0
 bool	video_ctx_scaling	1	0
 bool	netplay_fade_chat	1	1
 bool	netplay_allow_pausing	1	0
+bool	netplay_analog_joypads	1	1
+bool	netplay_lockstep	1	0
 bool	netplay_allow_slaves	1	1
 bool	netplay_require_slaves	1	0
 bool	playlist_entry_rename	1	1
@@ -1633,7 +1662,10 @@ bool	ozone_collapse_sidebar	1	0
 bool	video_hdr_scanlines	1	1
 bool	video_stereo_swap_eyes	1	0
 bool	video_openxr_enable	1	0
+bool	video_openxr_menu_follow	1	0
 bool	video_openxr_perf_boost	1	0
+bool	video_openxr_edit_pause	1	0
+bool	video_openxr_edit_snap	1	1
 bool	rewind_enable	1	0
 bool	menu_linear_filter	1	0
 bool	xmb_vertical_thumbnails	1	0
@@ -1985,6 +2017,7 @@ uint	content_history_size	1	200
 uint	input_menu_toggle_gamepad_combo	1	INPUT_COMBO_NONE
 uint	input_quit_gamepad_combo	1	INPUT_COMBO_NONE
 uint	input_hotkey_block_delay	1	5
+uint	input_hotkey_tap_delay	1	0
 uint	input_assign_ports_keyboard	1	0
 uint	input_rotation	1	0
 uint	input_socd_horizontal	1	0
@@ -2018,6 +2051,10 @@ uint	video_openxr_refresh_rate	1	0
 uint	video_openxr_placement	1	0
 uint	video_openxr_controllers	1	0
 uint	video_openxr_laser	1	0
+uint	video_openxr_laser_beam	1	1
+uint	video_openxr_edit_snap_angles	1	1
+uint	video_openxr_edit_hinge_gap	1	2
+uint	video_openxr_edit_smoothing	1	2
 uint	rewind_granularity	1	1
 uint	playlist_show_history_icons	1	PLAYLIST_SHOW_HISTORY_ICONS_CONTENT
 uint	rgui_internal_upscale_level	1	RGUI_UPSCALE_NONE
@@ -2072,8 +2109,11 @@ uint	netplay_input_latency_frames_min	1	0
 uint	netplay_input_latency_frames_range	1	0
 uint	streaming_mode	1	STREAMING_MODE_TWITCH
 uint	input_overlay_abxy_diagonal_sensitivity	1	50
+uint	input_overlay_abxy_method	1	0
 uint	input_overlay_analog_recenter_zone	1	0
+uint	input_overlay_contact_scale	1	100
 uint	input_overlay_dpad_diagonal_sensitivity	1	80
+uint	input_overlay_dpad_method	1	0
 uint	input_overlay_show_inputs	1	OVERLAY_SHOW_INPUT_PHYSICAL
 uint	input_overlay_show_inputs_port	1	0
 uint	network_cmd_port	1	55355
