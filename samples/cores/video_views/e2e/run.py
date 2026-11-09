@@ -156,6 +156,11 @@ HW_CASES = {
     'd3d12': [(name, 'd3d12')
               for name in ('3ds-2d', '3ds-sbs-full', '3ds-anaglyph',
                            '3ds-interlaced', '3ds-sbs-full-threaded')],
+    # The core's own Direct3D 9 textures, its views drawn straight from
+    # them
+    'd3d9_hlsl': [(name, 'd3d9')
+                  for name in ('3ds-2d', '3ds-sbs-full', '3ds-anaglyph',
+                               '3ds-interlaced', '3ds-sbs-full-threaded')],
 }
 
 # A frame past the declared maximum in the core's own Vulkan image.
@@ -264,6 +269,7 @@ EXACT_CASES = [
     ('exact-3ds', '3ds', NOISE, 'vulkan'),
     ('exact-3ds', '3ds', NOISE, 'd3d11'),
     ('exact-3ds', '3ds', NOISE, 'd3d12'),
+    ('exact-3ds', '3ds', NOISE, 'd3d9'),
     # No map: the frame drawn whole. A core's GL framebuffer as large as
     # its maximum holds the frame in a corner, so the stock chain would
     # copy it out; glcore draws it straight from there instead.
@@ -273,7 +279,7 @@ EXACT_CASES = [
 EXACT_HW = {'gl': ('off', 'gl_compat'),
             'glcore': ('off', 'gl', 'gl_topleft'), 'vulkan': ('off', 'vulkan'),
             'gl1': ('off',), 'd3d10': ('off',), 'd3d11': ('off', 'd3d11'),
-            'd3d12': ('off', 'd3d12'), 'd3d9_hlsl': ('off',),
+            'd3d12': ('off', 'd3d12'), 'd3d9_hlsl': ('off', 'd3d9'),
             'sdl2': ('off',), 'sdl3': ('off',), 'd3d8': ('off',),
             'gdi': ('off',), 'sdl': ('off',), 'x11': ('off',)}
 # Drivers whose views take a preset: on the others a preset draws the
@@ -310,6 +316,11 @@ SW_IN_PLACE_DRIVERS = ('glcore', 'vulkan')
 WRITE_SW_RE = re.compile(
     r'\] Views\' presets have each view of a software frame written '
     r'straight in\.')
+# d3d9_hlsl's presets on a core's Direct3D 9 texture: each view copied
+# out of it on the GPU
+D3D9_HW_COPY_RE = re.compile(
+    r'\] Views\' presets have each view of a hardware frame copied out '
+    r'of the core\'s texture\.')
 # Drivers on shader model 4, where the rect presets' gathers of more than
 # the red component do not compile.
 SM4_DRIVERS = ('d3d10',)
@@ -499,6 +510,9 @@ def write_cfg(path, d, driver, settings, port):
         'confirm_quit': 'false',
         'quit_press_twice': 'false',
         'config_save_on_exit': 'false',
+        # A first run offers the missing downloads in a dialog over the
+        # menu, which then holds the menu's input.
+        'rgui_show_start_screen': 'false',
         'network_cmd_enable': 'true',
         'network_cmd_port': str(port),
         'history_list_enable': 'false',
@@ -1256,6 +1270,10 @@ def run_exact_case(retroarch, root, driver, case, suffix='',
     if driver in WRITE_SW_VIEWS and direct_drawn(d, WRITE_SW_RE) != written:
         errors.append('views %s straight in'
                       % ('not written' if written else 'written'))
+    if driver == 'd3d9_hlsl' and hw == 'd3d9' and mapopt != 'none' \
+            and direct_drawn(d, D3D9_HW_COPY_RE) != bool(preset):
+        errors.append('views %s out of the core\'s texture'
+                      % ('copied' if not preset else 'not copied'))
     shots = sorted(x for x in os.listdir(os.path.join(d, 'shots'))
                    if x.endswith('.png'))
     if not shots:

@@ -618,15 +618,16 @@ void gl3_framebuffer_copy(
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+/* @vbo: written with the quad each call, made once by the caller */
 void gl3_framebuffer_copy_partial(
       GLuint fb_id,
       GLuint quad_program,
+      GLuint vbo,
       GLint flat_ubo_vertex,
       unsigned size_width, unsigned size_height,
       GLuint image,
       float ox, float oy, float rx, float ry)
 {
-   GLuint vbo;
    /* C89: an aggregate initializer must be constant, and the corners'
     * texture coordinates are not; they are set after declaration. */
    float quad_data[16] = {
@@ -671,18 +672,14 @@ void gl3_framebuffer_copy_partial(
    glEnableVertexAttribArray(0);
    glEnableVertexAttribArray(1);
 
-   /* A bit crude, but heeeey. */
-   glGenBuffers(1, &vbo);
    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-
-   glBufferData(GL_ARRAY_BUFFER, sizeof(quad_data), quad_data, GL_STREAM_DRAW);
+   glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quad_data), quad_data);
    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
                          (void *)((uintptr_t)(0)));
    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
                          (void *)((uintptr_t)(2 * sizeof(float))));
    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
    glBindBuffer(GL_ARRAY_BUFFER, 0);
-   glDeleteBuffers(1, &vbo);
    glDisableVertexAttribArray(0);
    glDisableVertexAttribArray(1);
    glUseProgram(0);
@@ -1778,8 +1775,8 @@ static void gl3_raster_font_draw_vertices(gl3_t *gl,
 static void gl3_raster_font_render_message(
       gl3_t *gl,
       gl3_raster_t *font, const char *msg, size_t msg_len,
-      GLfloat scale, const GLfloat color[4], GLfloat pos_x,
-      GLfloat pos_y, unsigned text_align)
+      GLfloat scale, GLfloat x_scale, const GLfloat color[4],
+      GLfloat pos_x, GLfloat pos_y, unsigned text_align)
 {
    struct video_coords coords;
    GLfloat color_block[4 * 6];
@@ -1794,9 +1791,10 @@ static void gl3_raster_font_render_message(
    GLfloat *font_color                    = font->font_color;
    float inv_tex_size_x                   = 1.0f / font->atlas->width;
    float inv_tex_size_y                   = 1.0f / font->atlas->height;
-   float inv_win_width                    = 1.0f / VIDEO_SCALE_W(gl->vp.dims);
+   float win_width                        = VIDEO_SCALE_W(gl->vp.dims) / x_scale;
+   float inv_win_width                    = 1.0f / win_width;
    float inv_win_height                   = 1.0f / VIDEO_SCALE_H(gl->vp.dims);
-   int pre_x                              = roundf(pos_x * VIDEO_SCALE_W(gl->vp.dims));
+   int pre_x                              = roundf(pos_x * win_width);
    const struct font_glyph* (*get_glyph)(void*, uint32_t)
                                           = font->font_driver->get_glyph;
    void *font_data                        = font->font_data;
@@ -1952,13 +1950,13 @@ static void gl3_raster_font_render_msg(
          color_dark[3] = color[3] * drop_alpha;
 
          gl3_raster_font_render_message(gl, font, msg, msg_len, scale,
-               color_dark,
-               x + scale * drop_x / VIDEO_SCALE_W(gl->vp.dims),
+               rp.x_scale, color_dark,
+               x + scale * drop_x * rp.x_scale / VIDEO_SCALE_W(gl->vp.dims),
                y + scale * drop_y / VIDEO_SCALE_H(gl->vp.dims), text_align);
       }
 
       gl3_raster_font_render_message(gl, font, msg, msg_len, scale,
-            color,
+            rp.x_scale, color,
             x, y, text_align);
    }
 

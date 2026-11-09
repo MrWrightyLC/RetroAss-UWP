@@ -234,6 +234,7 @@ ACHIEVEMENTS
 #include "../cheevos/cheevos_client.c"
 #include "../cheevos/cheevos_menu.c"
 #include "../cheevos/cheevos_badge.c"
+#include "../cheevos/cheevos_ciso.c"
 
 #if defined(HAVE_CHEEVOS_RVZ) && defined(HAVE_RZSTD)
 #include "../libretro-common/formats/rvz/rvz.c"
@@ -360,6 +361,11 @@ VIDEO CONTEXT
 #endif
 #if defined(HAVE_VULKAN)
 #include "../gfx/drivers_context/android_vk_ctx.c"
+#if defined(HAVE_VULKAN_CUSTOM_DRIVER)
+#include "../gfx/common/vulkan_custom_driver.c"
+#include "../gfx/common/vulkan_custom_driver_android.c"
+#include "../gfx/common/vulkan_custom_driver_linker.c"
+#endif
 #if defined(HAVE_OPENXR)
 #include "../gfx/drivers_context/android_vk_openxr_ctx.c"
 #endif
@@ -1845,6 +1851,12 @@ DATA RUNLOOP
 #include "../tasks/task_database.c"
 #ifdef HAVE_LIBRETRODB
 #include "../tasks/task_database_cue.c"
+#include "../libretro-common/formats/xdvdfs/xdvdfs.c"
+#include "../libretro-common/formats/zar/zar.c"
+#include "../libretro-common/formats/wux/wux.c"
+#endif
+#if defined(HAVE_LIBRETRODB) || defined(HAVE_CHEEVOS)
+#include "../libretro-common/formats/ciso/ciso.c"
 #endif
 #if defined(HAVE_NETWORKING) && defined(HAVE_MENU)
 #include "../tasks/task_core_updater.c"
@@ -2139,6 +2151,10 @@ CLOUD SYNC
 #include "../network/cloud_sync/nfs.c"
 #endif
 #ifdef HAVE_S3
+/* SigV4 signs with crypto/kdf.c's SHA-256 and HMAC */
+#ifndef HAVE_CRYPTO
+#error "HAVE_S3 needs HAVE_CRYPTO"
+#endif
 #include "../network/cloud_sync/s3.c"
 #endif
 #endif

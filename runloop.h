@@ -184,6 +184,7 @@ struct runloop
    rarch_timer_t shader_delay_timer;            /* int64_t alignment */
 #endif
    retro_time_t core_runtime_last;
+   retro_time_t core_runtime_credit;
    retro_time_t core_runtime_usec;
    retro_time_t core_run_time;
    /* GPU device-loss recovery: when the driver may next be rebuilt,
@@ -642,6 +643,24 @@ static INLINE bool runloop_pace_sample_usable(retro_time_t delta_us)
    return delta_us > 0 && delta_us < 250000;
 }
 
+/* A core running faster than real time must count only real time.
+ * Up to four frames of wall time bank in @credit, so frames that come
+ * unevenly but keep up - two at a time under audio sync - count in full. */
+static INLINE retro_time_t runloop_core_runtime_step(retro_time_t frame,
+      retro_time_t since, retro_time_t *credit)
+{
+   retro_time_t cap = 4 * frame;
+   retro_time_t tick;
+   if (since < 0)
+      since = 0;
+   *credit += since;
+   if (*credit > cap)
+      *credit = cap;
+   tick     = (frame < *credit) ? frame : *credit;
+   *credit -= tick;
+   return tick;
+}
+
 /* The swap interval 'Auto' derives for a display/content pair: the
  * number of display frames one content frame is held for. Meaningful
  * only as the whole multiple the display rate actually is of the
@@ -766,7 +785,10 @@ enum runloop_pace_fact
    PACE_FACT_FRAME_LIMIT     = (1 << 17), /* frame_limit_minimum_time != 0 */
    PACE_FACT_DRIVER_PACING   = (1 << 18), /* the driver's low-latency backend
                                              is up and took the mode */
-   PACE_FACT_CORE_RAN        = (1 << 19)  /* this iteration ran the core */
+   PACE_FACT_CORE_RAN        = (1 << 19), /* this iteration ran the core */
+   PACE_FACT_DRIVER_PACING_MISSING = (1 << 20) /* Driver Pacing is on, but
+                                             the driver has no backend
+                                             that took it */
 };
 
 typedef unsigned runloop_pace_facts_t;
@@ -823,6 +845,18 @@ static INLINE unsigned runloop_pace_driver_interval(unsigned pace,
                     | RUNLOOP_PACE_SCANLINE)))
       return 0;
    return (unsigned)content_period;
+}
+
+/* Driver Pacing on a driver with no backend for it (gl, glcore, a GPU
+ * without the extension): where the backend would have owned the
+ * release with nothing else holding the loop, the timer holds it to
+ * the content's period, the interval the backend would have kept. */
+static INLINE bool runloop_pace_driver_fallback(runloop_pace_facts_t f,
+      unsigned pace)
+{
+   return    (f & PACE_FACT_DRIVER_PACING_MISSING)
+          && pace == RUNLOOP_PACE_NONE
+          && runloop_pace_driver_owns(f | PACE_FACT_DRIVER_PACING, pace);
 }
 
 static INLINE unsigned runloop_pace_sources(runloop_pace_facts_t f)
@@ -895,6 +929,8 @@ static INLINE unsigned runloop_pace_decide(runloop_pace_facts_t f)
             (f & PACE_FACT_FASTMOTION)    != 0,
             (f & PACE_FACT_SCANLINE_SYNC) != 0,
             (f & PACE_FACT_RATE_CONTROL)  != 0))
+      pace |= RUNLOOP_PACE_TIMER;
+   else if (runloop_pace_driver_fallback(f, pace))
       pace |= RUNLOOP_PACE_TIMER;
    return pace;
 }
@@ -995,6 +1031,10 @@ bool runloop_core_preload_ready(void);
 void runloop_core_preload_cancel(void);
 
 #ifdef HAVE_DYNAMIC
+/* dylib_load() for a core; on Android only from the app's own folders.
+ * @quiet: a worker's open, whose refusal the main thread's open logs */
+dylib_t runloop_core_dylib_load(const char *path, bool quiet);
+
 /* Frees the records libretro_get_system_info() keeps of the cores it
  * has asked; the next question reads them back from disk. */
 void runloop_core_probe_cache_free(void);

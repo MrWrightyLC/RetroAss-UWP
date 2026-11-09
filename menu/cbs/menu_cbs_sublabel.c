@@ -63,6 +63,9 @@
 #include "../../msg_hash_lbl_str.h"
 #include "../../playlist.h"
 #include "../../runtime_file.h"
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+#include "../../gfx/common/vulkan_custom_driver.h"
+#endif
 
 #ifndef BIND_ACTION_SUBLABEL
 #define BIND_ACTION_SUBLABEL(cbs, name) (cbs)->action_sublabel = (name)
@@ -1008,6 +1011,7 @@ static int action_bind_sublabel_input_remap_port(
       char *s, size_t len)
 {
    size_t _len;
+   unsigned with, core;
    unsigned user_idx     = 0;
    unsigned display_port = 0;
    menu_entry_t entry;
@@ -1045,12 +1049,24 @@ static int action_bind_sublabel_input_remap_port(
          return 0;
    }
 
+   if (display_port)
+      user_idx = display_port - 1;
+
+   /* playing as another user's player, it feeds that user's core
+    * port, whatever its own Mapped Port holds; the join can change
+    * while this is shown, so it is not kept */
+   if (     (with = input_remapping_join_user(user_idx)) < MAX_USERS
+         && (core = input_remapping_user_port(user_idx)) < MAX_USERS)
+   {
+      snprintf(s, len,
+            msg_hash_to_str(MENU_ENUM_SUBLABEL_INPUT_REMAP_PORT_SHARING),
+            with + 1, core + 1);
+      return 0;
+   }
+
    _len = snprintf(s, len,
          msg_hash_to_str(MENU_ENUM_SUBLABEL_INPUT_REMAP_PORT),
          display_port);
-
-   if (display_port)
-      user_idx = display_port - 1;
 
    /* Remove trailing dot */
    snprintf(s + _len - 1, len - _len - 1, ": %s",
@@ -1509,6 +1525,47 @@ static int action_bind_sublabel_core_backup_entry(
    return 1;
 }
 
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_video_vulkan_driver_path, MENU_ENUM_SUBLABEL_VIDEO_VULKAN_DRIVER_PATH)
+
+static int action_bind_sublabel_video_vulkan_driver_path_crashed(
+      file_list_t *list,
+      unsigned type, unsigned i,
+      const char *label, const char *path,
+      char *s, size_t len)
+{
+   size_t _len = 0;
+   strlcpy_append(s, len, &_len, msg_hash_to_str(
+            MENU_ENUM_SUBLABEL_VIDEO_VULKAN_DRIVER_PATH_CRASHED));
+   strlcpy_append(s, len, &_len, "\n");
+   strlcpy_append(s, len, &_len, msg_hash_to_str(
+            MENU_ENUM_SUBLABEL_VIDEO_VULKAN_DRIVER_PATH));
+   return 1;
+}
+
+static int action_bind_sublabel_video_vulkan_driver_path_safe_mode(
+      file_list_t *list,
+      unsigned type, unsigned i,
+      const char *label, const char *path,
+      char *s, size_t len)
+{
+   size_t _len       = 0;
+   const char *saved = config_get_ptr()->paths.path_vulkan_driver;
+   if (!string_is_empty(saved))
+   {
+      char name[NAME_MAX_LENGTH];
+      fill_pathname(name, path_basename(saved), "", sizeof(name));
+      snprintf(s, len, msg_hash_to_str(
+               MENU_ENUM_SUBLABEL_VIDEO_VULKAN_DRIVER_PATH_SAFE_MODE), name);
+      _len = strlen(s);
+      strlcpy_append(s, len, &_len, "\n");
+   }
+   strlcpy_append(s, len, &_len, msg_hash_to_str(
+            MENU_ENUM_SUBLABEL_VIDEO_VULKAN_DRIVER_PATH));
+   return 1;
+}
+#endif
+
 static int action_bind_sublabel_generic(
       file_list_t *list,
       unsigned type, unsigned i,
@@ -1551,6 +1608,61 @@ size_t menu_cbs_sublabel_for_enum(enum msg_hash_enums enum_idx,
    if (cbs.action_sublabel && cbs.action_sublabel != action_bind_sublabel_from_enum)
       cbs.action_sublabel(NULL, type, 0, NULL, NULL, s, len);
    return strlen(s);
+}
+
+/* Settings > Input > Controllers and Port N Controls: the player it
+ * plays as, and where. */
+static int action_bind_sublabel_input_plays_as(
+      file_list_t *list,
+      unsigned type, unsigned i,
+      const char *label, const char *path,
+      char *s, size_t len)
+{
+   unsigned player, port;
+   unsigned row  = type - MENU_SETTINGS_INPUT_PLAYS_AS_BEGIN;
+   /* Port N Controls' rows carry N */
+   size_t page   = (list && i < list->size) ? list->list[i].entry_idx : 0;
+   enum input_plays_as_where where = input_config_plays_as_where(row,
+         &player, &port);
+
+   if (page && port)
+   {
+      if (port == page)
+         strlcpy(s, msg_hash_to_str(MENU_ENUM_SUBLABEL_INPUT_PLAYS_AS_THIS_PORT),
+               len);
+      else
+         snprintf(s, len,
+               msg_hash_to_str(MENU_ENUM_SUBLABEL_INPUT_PLAYS_AS_SHARED_BINDS),
+               port);
+      return 0;
+   }
+   switch (where)
+   {
+      case INPUT_PLAYS_AS_NO_PORT:
+         strlcpy(s, msg_hash_to_str(MENU_ENUM_SUBLABEL_INPUT_PLAYS_AS_NO_PORT),
+               len);
+         break;
+      case INPUT_PLAYS_AS_ABOVE_MAX_USERS:
+         snprintf(s, len,
+               msg_hash_to_str(MENU_ENUM_SUBLABEL_INPUT_PLAYS_AS_ABOVE_MAX_USERS),
+               player);
+         break;
+      case INPUT_PLAYS_AS_SHARING:
+         snprintf(s, len,
+               msg_hash_to_str(MENU_ENUM_SUBLABEL_INPUT_PLAYS_AS_SHARING),
+               player, port);
+         break;
+      case INPUT_PLAYS_AS_OWN_PORT:
+         snprintf(s, len,
+               msg_hash_to_str(MENU_ENUM_SUBLABEL_INPUT_PLAYS_AS_PLAYER),
+               player);
+         break;
+      default:
+         strlcpy(s, msg_hash_to_str(MENU_ENUM_SUBLABEL_INPUT_PLAYS_AS_GONE),
+               len);
+         break;
+   }
+   return 0;
 }
 
 int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
@@ -1623,6 +1735,11 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
          MENU_SETTINGS_REMAPPING_PORT_BEGIN,
          MENU_SETTINGS_REMAPPING_PORT_END,
          action_bind_sublabel_user_remap_settings
+      },
+      {
+         MENU_SETTINGS_INPUT_PLAYS_AS_BEGIN,
+         MENU_SETTINGS_INPUT_PLAYS_AS_END,
+         action_bind_sublabel_input_plays_as
       },
 
    };
@@ -1922,6 +2039,7 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
       { MENU_ENUM_LABEL_MENU_USE_PREFERRED_SYSTEM_COLOR_THEME, MENU_ENUM_SUBLABEL_MENU_USE_PREFERRED_SYSTEM_COLOR_THEME },
       { MENU_ENUM_LABEL_INPUT_HOTKEY_BINDS, MENU_ENUM_SUBLABEL_INPUT_HOTKEY_BINDS },
       { MENU_ENUM_LABEL_INPUT_RETROPAD_BINDS, MENU_ENUM_SUBLABEL_INPUT_RETROPAD_BINDS },
+      { MENU_ENUM_LABEL_INPUT_CONTROLLERS, MENU_ENUM_SUBLABEL_INPUT_CONTROLLERS },
       { MENU_ENUM_LABEL_INPUT_TURBO_FIRE_SETTINGS, MENU_ENUM_SUBLABEL_INPUT_TURBO_FIRE_SETTINGS },
       { MENU_ENUM_LABEL_INPUT_TURBO_ENABLE, MENU_ENUM_SUBLABEL_INPUT_TURBO_ENABLE },
       { MENU_ENUM_LABEL_INPUT_TURBO_MODE, MENU_ENUM_SUBLABEL_INPUT_TURBO_MODE },
@@ -2149,6 +2267,8 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
       { MENU_ENUM_LABEL_VIDEO_STEREO_MODE, MENU_ENUM_SUBLABEL_VIDEO_STEREO_MODE },
       { MENU_ENUM_LABEL_VIDEO_STEREO_SWAP_EYES, MENU_ENUM_SUBLABEL_VIDEO_STEREO_SWAP_EYES },
       { MENU_ENUM_LABEL_VIDEO_SCREEN_LAYOUT, MENU_ENUM_SUBLABEL_VIDEO_SCREEN_LAYOUT },
+      { MENU_ENUM_LABEL_VIDEO_MENU_FOLLOWS, MENU_ENUM_SUBLABEL_VIDEO_MENU_FOLLOWS },
+      { MENU_ENUM_LABEL_VIDEO_NOTIFICATIONS_WINDOW, MENU_ENUM_SUBLABEL_VIDEO_NOTIFICATIONS_WINDOW },
       { MENU_ENUM_LABEL_VIDEO_OPENXR_ENABLE, MENU_ENUM_SUBLABEL_VIDEO_OPENXR_ENABLE },
       { MENU_ENUM_LABEL_VIDEO_OPENXR_REFRESH_RATE, MENU_ENUM_SUBLABEL_VIDEO_OPENXR_REFRESH_RATE },
       { MENU_ENUM_LABEL_VIDEO_OPENXR_DISTANCE, MENU_ENUM_SUBLABEL_VIDEO_OPENXR_DISTANCE },
@@ -2164,6 +2284,9 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
       { MENU_ENUM_LABEL_VIDEO_OPENXR_EDIT_SNAP_ANGLES, MENU_ENUM_SUBLABEL_VIDEO_OPENXR_EDIT_SNAP_ANGLES },
       { MENU_ENUM_LABEL_VIDEO_OPENXR_EDIT_HINGE_GAP, MENU_ENUM_SUBLABEL_VIDEO_OPENXR_EDIT_HINGE_GAP },
       { MENU_ENUM_LABEL_VIDEO_OPENXR_EDIT_SMOOTHING, MENU_ENUM_SUBLABEL_VIDEO_OPENXR_EDIT_SMOOTHING },
+      { MENU_ENUM_LABEL_VIDEO_OPENXR_TOUCH_HANDS, MENU_ENUM_SUBLABEL_VIDEO_OPENXR_TOUCH_HANDS },
+      { MENU_ENUM_LABEL_VIDEO_OPENXR_TOUCH_BUTTON, MENU_ENUM_SUBLABEL_VIDEO_OPENXR_TOUCH_BUTTON },
+      { MENU_ENUM_LABEL_VIDEO_OPENXR_TOUCH_PASSTHROUGH, MENU_ENUM_SUBLABEL_VIDEO_OPENXR_TOUCH_PASSTHROUGH },
       { MENU_ENUM_LABEL_VIDEO_SCREEN_SELECTED, MENU_ENUM_SUBLABEL_VIDEO_SCREEN_SELECTED },
       { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_X, MENU_ENUM_SUBLABEL_VIDEO_SCREEN_XR_X },
       { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_Y, MENU_ENUM_SUBLABEL_VIDEO_SCREEN_XR_Y },
@@ -2176,8 +2299,9 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
       { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_RESET, MENU_ENUM_SUBLABEL_VIDEO_SCREEN_XR_RESET },
       { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_RESET_ALL, MENU_ENUM_SUBLABEL_VIDEO_SCREEN_XR_RESET_ALL },
       { MENU_ENUM_LABEL_VIDEO_SCREEN_XR_EDIT, MENU_ENUM_SUBLABEL_VIDEO_SCREEN_XR_EDIT },
-      { MENU_ENUM_LABEL_VIDEO_SCREEN_WINDOW_MODE, MENU_ENUM_SUBLABEL_VIDEO_SCREEN_WINDOW_MODE },
       { MENU_ENUM_LABEL_VIDEO_SCREEN_WINDOW_MONITOR, MENU_ENUM_SUBLABEL_VIDEO_SCREEN_WINDOW_MONITOR },
+      { MENU_ENUM_LABEL_VIDEO_SCREEN_DISPLAY, MENU_ENUM_SUBLABEL_VIDEO_SCREEN_DISPLAY },
+      { MENU_ENUM_LABEL_VIDEO_MENU_DISPLAY, MENU_ENUM_SUBLABEL_VIDEO_MENU_DISPLAY },
       { MENU_ENUM_LABEL_FILE_BROWSER_OPEN_UWP_PERMISSIONS, MENU_ENUM_SUBLABEL_FILE_BROWSER_OPEN_UWP_PERMISSIONS },
       { MENU_ENUM_LABEL_FILE_BROWSER_OPEN_PICKER, MENU_ENUM_SUBLABEL_FILE_BROWSER_OPEN_PICKER },
       { MENU_ENUM_LABEL_MENU_SHOW_LOAD_CORE, MENU_ENUM_SUBLABEL_MENU_SHOW_LOAD_CORE },
@@ -2755,6 +2879,7 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
       { MENU_ENUM_LABEL_PLAYLIST_MANAGER_SORT_MODE, MENU_ENUM_SUBLABEL_PLAYLIST_MANAGER_SORT_MODE },
       { MENU_ENUM_LABEL_PLAYLIST_MANAGER_CLEAN_PLAYLIST, MENU_ENUM_SUBLABEL_PLAYLIST_MANAGER_CLEAN_PLAYLIST },
       { MENU_ENUM_LABEL_PLAYLIST_MANAGER_REFRESH_PLAYLIST, MENU_ENUM_SUBLABEL_PLAYLIST_MANAGER_REFRESH_PLAYLIST },
+      { MENU_ENUM_LABEL_PLAYLIST_MANAGER_REFRESH_ALL_PLAYLISTS, MENU_ENUM_SUBLABEL_PLAYLIST_MANAGER_REFRESH_ALL_PLAYLISTS },
       { MENU_ENUM_LABEL_SAVE_AS_CONFIG, MENU_ENUM_SUBLABEL_SAVE_AS_CONFIG },
       { MENU_ENUM_LABEL_SAVE_MAIN_CONFIG, MENU_ENUM_SUBLABEL_SAVE_MAIN_CONFIG },
       { MENU_ENUM_LABEL_ONSCREEN_DISPLAY_SETTINGS, MENU_ENUM_SUBLABEL_ONSCREEN_DISPLAY_SETTINGS },
@@ -2819,6 +2944,10 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
       { MENU_ENUM_LABEL_NETPLAY_NICKNAME, MENU_ENUM_SUBLABEL_NETPLAY_NICKNAME },
       { MENU_ENUM_LABEL_VIDEO_VIEWPORT_BIAS_X, MENU_ENUM_SUBLABEL_VIDEO_VIEWPORT_BIAS_X },
       { MENU_ENUM_LABEL_VIDEO_VIEWPORT_BIAS_Y, MENU_ENUM_SUBLABEL_VIDEO_VIEWPORT_BIAS_Y },
+      { MENU_ENUM_LABEL_VIDEO_IOS_MARGIN_LEFT, MENU_ENUM_SUBLABEL_VIDEO_IOS_MARGIN_LEFT },
+      { MENU_ENUM_LABEL_VIDEO_IOS_MARGIN_RIGHT, MENU_ENUM_SUBLABEL_VIDEO_IOS_MARGIN_RIGHT },
+      { MENU_ENUM_LABEL_VIDEO_IOS_MARGIN_TOP, MENU_ENUM_SUBLABEL_VIDEO_IOS_MARGIN_TOP },
+      { MENU_ENUM_LABEL_VIDEO_IOS_MARGIN_BOTTOM, MENU_ENUM_SUBLABEL_VIDEO_IOS_MARGIN_BOTTOM },
       { MENU_ENUM_LABEL_VIDEO_ASPECT_RATIO_INDEX, MENU_ENUM_SUBLABEL_VIDEO_ASPECT_RATIO_INDEX },
       { MENU_ENUM_LABEL_VIDEO_ASPECT_RATIO, MENU_ENUM_SUBLABEL_VIDEO_ASPECT_RATIO },
       { MENU_ENUM_LABEL_VIDEO_VIEWPORT_CUSTOM_X, MENU_ENUM_SUBLABEL_VIDEO_VIEWPORT_CUSTOM_X },
@@ -2917,12 +3046,12 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
       unsigned hi  = (unsigned)ARRAY_SIZE(sublabel_map);
       unsigned m;
       /* A row a screen, each with an enum of its own */
-      if (     cbs->enum_idx >= MENU_ENUM_LABEL_VIDEO_SCREEN_WINDOW_MODE
-            && cbs->enum_idx <= MENU_ENUM_LABEL_VIDEO_SCREEN_WINDOW_MODE_LAST)
-         key = MENU_ENUM_LABEL_VIDEO_SCREEN_WINDOW_MODE;
-      else if (cbs->enum_idx >= MENU_ENUM_LABEL_VIDEO_SCREEN_WINDOW_MONITOR
+      if (     cbs->enum_idx >= MENU_ENUM_LABEL_VIDEO_SCREEN_WINDOW_MONITOR
             && cbs->enum_idx <= MENU_ENUM_LABEL_VIDEO_SCREEN_WINDOW_MONITOR_LAST)
          key = MENU_ENUM_LABEL_VIDEO_SCREEN_WINDOW_MONITOR;
+      else if (cbs->enum_idx >= MENU_ENUM_LABEL_VIDEO_SCREEN_DISPLAY
+            && cbs->enum_idx <= MENU_ENUM_LABEL_VIDEO_SCREEN_DISPLAY_LAST)
+         key = MENU_ENUM_LABEL_VIDEO_SCREEN_DISPLAY;
       while (lo < hi)
       {
          unsigned mid = lo + ((hi - lo) >> 1);
@@ -2971,6 +3100,22 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
 #ifdef HAVE_MICROPHONE
          case MENU_ENUM_LABEL_MICROPHONE_RESAMPLER_QUALITY:
             BIND_ACTION_SUBLABEL(cbs, action_bind_sublabel_microphone_resampler_quality);
+            break;
+#endif
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+         /* Chosen here, on the main thread: Ozone draws sublabels
+          * from its frame callback, the video thread when threaded */
+         case MENU_ENUM_LABEL_VIDEO_VULKAN_DRIVER_PATH:
+            if (vulkan_custom_driver_crashed(
+                     config_get_ptr()->paths.path_vulkan_driver))
+               BIND_ACTION_SUBLABEL(cbs,
+                     action_bind_sublabel_video_vulkan_driver_path_crashed);
+            else if (vulkan_custom_driver_safe_mode())
+               BIND_ACTION_SUBLABEL(cbs,
+                     action_bind_sublabel_video_vulkan_driver_path_safe_mode);
+            else
+               BIND_ACTION_SUBLABEL(cbs,
+                     action_bind_sublabel_video_vulkan_driver_path);
             break;
 #endif
          case MENU_ENUM_LABEL_MATERIALUI_ICONS_ENABLE:

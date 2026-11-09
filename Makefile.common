@@ -605,7 +605,11 @@ ifeq ($(HAVE_LIBRETRODB), 1)
           libretro-db/libretrodb.o \
           libretro-db/query.o \
           database_info.o \
-          tasks/task_database_cue.o
+          tasks/task_database_cue.o \
+          $(LIBRETRO_COMM_DIR)/formats/ciso/ciso.o \
+          $(LIBRETRO_COMM_DIR)/formats/xdvdfs/xdvdfs.o \
+          $(LIBRETRO_COMM_DIR)/formats/zar/zar.o \
+          $(LIBRETRO_COMM_DIR)/formats/wux/wux.o
 
    ifeq ($(HAVE_MENU), 1)
       OBJ += menu/menu_explore.o \
@@ -900,6 +904,13 @@ OBJ += $(LIBRETRO_COMM_DIR)/audio/conversion/s16_to_float.o \
        $(LIBRETRO_COMM_DIR)/audio/conversion/float_to_s32.o \
        $(LIBRETRO_COMM_DIR)/audio/conversion/mono_to_stereo_float.o \
        $(LIBRETRO_COMM_DIR)/audio/conversion/stereo_to_mono_float.o \
+
+ifeq ($(HAVE_RWMA),1)
+DEFINES += -DHAVE_RWMA
+OBJ += $(LIBRETRO_COMM_DIR)/formats/wma/rwma_pro.o \
+       $(LIBRETRO_COMM_DIR)/formats/wma/rwma_standard.o \
+       $(LIBRETRO_COMM_DIR)/formats/wma/rwma_stream.o
+endif
 
 # AC-3: the frame layer, decoder and encoder from ATSC A/52 and the
 # IEC 61937 burst framing, no dependencies. The decoder is an arm of
@@ -1374,9 +1385,6 @@ ifeq ($(HAVE_X11), 1)
       LIBS += -lXi
       DEFINES += -DHAVE_XI2
    endif
-   ifeq ($(HAVE_XSCRNSAVER),1)
-      LIBS += -lXss
-   endif
    ifneq ($(HAVE_OPENGLES), 1)
       OBJ += gfx/drivers_context/x_ctx.o
    endif
@@ -1823,6 +1831,40 @@ ifeq ($(HAVE_VULKAN), 1)
 
    ifeq ($(ANDROID)$(HAVE_THREADS), 11)
       OBJ += record/record_android_capture_device.o
+   endif
+
+   ifeq ($(HAVE_VAAPI), 1)
+      DEFINES += -DHAVE_VAAPI
+      OBJ += gfx/common/vaapi_frame.o \
+             gfx/common/vaapi_hevc_decoder.o \
+             gfx/common/vaapi_hevc_owner.o \
+             gfx/common/vaapi_hevc_backend.o \
+             gfx/common/vaapi_hevc_session.o \
+             gfx/common/vaapi_hevc_runtime.o \
+             gfx/common/vaapi_hevc_submit.o \
+             gfx/common/vaapi_hevc_pool.o \
+             gfx/common/vaapi_hevc_export.o \
+             gfx/common/vulkan_prime_image.o \
+             gfx/common/vaapi_hevc_vulkan_frame.o \
+             gfx/common/vaapi_hevc_vulkan_submit.o \
+             gfx/common/vaapi_hevc_vulkan_lease.o \
+             gfx/common/vaapi_hevc_vulkan_resources.o \
+             gfx/common/vaapi_hevc_vulkan_cache.o \
+             gfx/common/vulkan_android_queue.o
+      ifeq ($(HAVE_RVP9), 1)
+         OBJ += gfx/common/vaapi_vp9_backend.o \
+                gfx/common/vaapi_vp9_owner.o \
+                gfx/common/vaapi_vp9_decoder.o \
+                gfx/common/vaapi_vp9_submit.o \
+                gfx/common/vaapi_vp9_pool.o
+      endif
+      ifeq ($(HAVE_RAV1), 1)
+         OBJ += gfx/common/vaapi_av1_submit.o \
+                gfx/common/vaapi_av1_pool.o \
+                gfx/common/vaapi_av1_decoder.o \
+                gfx/common/vaapi_av1_owner.o \
+                gfx/common/vaapi_av1_backend.o
+      endif
    endif
 
    # H.264/HEVC previews decoded on the GPU
@@ -2862,6 +2904,13 @@ ifeq ($(HAVE_NETWORKING), 1)
             OBJ += $(LIBRETRO_COMM_DIR)/formats/7z/r7z_lzma_stream.o \
                    $(LIBRETRO_COMM_DIR)/formats/7z/r7z_lzma2.o
          endif
+      endif
+
+      # CISO disc images for RetroAchievements; the scanner builds the
+      # reader with the database
+      OBJ += cheevos/cheevos_ciso.o
+      ifneq ($(HAVE_LIBRETRODB), 1)
+         OBJ += $(LIBRETRO_COMM_DIR)/formats/ciso/ciso.o
       endif
 
       # The hashes' AES (3DS titles) is the crypto library's wherever

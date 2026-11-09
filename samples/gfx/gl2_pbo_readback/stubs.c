@@ -67,16 +67,18 @@ void video_driver_attach_windows(unsigned screens, unsigned restore)
 { (void)screens; (void)restore; }
 void video_driver_cached_frame(void) { }
 void video_driver_cached_frame_retire(void) { }
+void video_driver_hw_context_shared_note(bool shared) { (void)shared; }
 uint32_t video_driver_get_disp_flags(void) { return 0; }
 struct retro_hw_render_callback *video_driver_get_hw_context(void)
 { static struct retro_hw_render_callback cb; return &cb; }
 unsigned video_driver_get_output_dims(void) { return 0; }
 void video_driver_modify_disp_flags(uint32_t set_bits, uint32_t clear_bits) { (void)set_bits; (void)clear_bits; }
 void video_driver_publish_window_layout(unsigned window,
-      unsigned generation, const video_views_layout_t *layout,
+      unsigned generation, unsigned display,
+      const video_views_layout_t *layout,
       const video_views_map_t *core_map, unsigned core_dims,
       unsigned window_dims)
-{ (void)window; (void)generation; (void)layout; (void)core_map; (void)core_dims; (void)window_dims; }
+{ (void)window; (void)generation; (void)display; (void)layout; (void)core_map; (void)core_dims; (void)window_dims; }
 void video_driver_set_output_dims(unsigned dims) { (void)dims; }
 bool video_driver_test_all_flags(enum display_flags testflag) { (void)testflag; return false; }
 bool video_driver_thread_wrapper_active(void) { return false; }
@@ -107,4 +109,11 @@ bool gl_glsl_draw_mesh(void *shader_data, unsigned vbo, unsigned ibo,
 { (void)shader_data; (void)vbo; (void)ibo; (void)count; (void)strip; (void)mvp; (void)tint; return false; }
 void gl_glsl_set_context_type(bool core_profile, unsigned major, unsigned minor)
 { (void)core_profile; (void)major; (void)minor; }
+bool gl_glsl_in_place(void *shader_data, unsigned filter, unsigned wrap)
+{ (void)shader_data; (void)filter; (void)wrap; return false; }
+void gl_glsl_in_place_begin(void *shader_data, bool flipped,
+      unsigned view_pos, unsigned view_dims, unsigned frame_h,
+      unsigned tex_dims)
+{ (void)shader_data; (void)flipped; (void)view_pos; (void)view_dims; (void)frame_h; (void)tex_dims; }
+void gl_glsl_in_place_end(void *shader_data) { (void)shader_data; }
 size_t video_driver_set_gpu_api_version_string(const char *str) { (void)str; return 0; }

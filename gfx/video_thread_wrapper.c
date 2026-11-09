@@ -2256,11 +2256,13 @@ void video_thread_defer_convert(enum video_thread_convert kind)
  * video_thread_defer_filter() arrives raw, in the core's format, with
  * the filter it was staged with. One replaced since is retired behind
  * the frames that name it (video_thread_retire_filter()). */
-static void video_thread_filter(void *filter, void *buffer,
-      unsigned out_bpp, const void **data, unsigned *dims, unsigned *pitch)
+static void video_thread_filter(thread_video_t *lend_thr, void *filter,
+      void *buffer, unsigned out_bpp, const void **data, unsigned *dims,
+      unsigned *pitch)
 {
    unsigned out_dims = 0;
    unsigned out_pitch;
+   void    *lent     = NULL;
 
    if (!*data || !filter || !buffer)
       return;
@@ -2268,6 +2270,21 @@ static void video_thread_filter(void *filter, void *buffer,
    rarch_softfilter_get_output_size((rarch_softfilter_t*)filter,
          &out_dims, *dims);
    out_pitch = VIDEO_SCALE_W(out_dims) * out_bpp;
+   /* A driver retires the cached frame as it remakes or copies out the
+    * memory it lends. That frame is the main thread's, and never in
+    * this memory: kept until the driver has the frame. */
+   if (lend_thr)
+   {
+      video_driver_state_t *video_st = lend_thr->video_st;
+      retro_atomic_store_release_size(&video_st->frame_cache_keeper,
+            VIDEO_CACHE_KEEPER);
+      lent = video_driver_filter_lend(lend_thr->poke, lend_thr->driver_data,
+            out_dims, out_bpp, &out_pitch);
+      if (!lent)
+         retro_atomic_store_release_size(&video_st->frame_cache_keeper, 0);
+   }
+   if (lent)
+      buffer = lent;
    rarch_softfilter_process((rarch_softfilter_t*)filter, buffer,
          out_pitch, *data, *dims, *pitch);
 
@@ -2920,6 +2937,12 @@ static void video_thread_loop(void *data)
                 * value carried from the main thread is whatever it read
                 * when the frame was built and is superseded here. */
                video_info->swap_count = thr->video_st->swap_count;
+#ifdef HAVE_VIDEO_WINDOWS
+               /* The snapshot the driver's window layouts are drawn
+                * from */
+               if (video_info->windows)
+                  thr->video_st->windows_drawn = video_info->windows->serial;
+#endif
                /* Retain what this frame puts on screen when the setting
                 * is on and the driver can put it there again. Shader
                 * sub-frames opt out: each is a different shader output
@@ -2992,7 +3015,7 @@ static void video_thread_loop(void *data)
                            &fdata, fdims, &fpitch);
 #ifdef HAVE_VIDEO_FILTER
                   if (fdata && thr->frame.slot[slot].filter_bpp)
-                     video_thread_filter(thr->frame.slot[slot].filter,
+                     video_thread_filter(thr, thr->frame.slot[slot].filter,
                            thr->frame.slot[slot].filter_buf,
                            thr->frame.slot[slot].filter_out_bpp,
                            &fdata, &fdims, &fpitch);
@@ -3006,6 +3029,11 @@ static void video_thread_loop(void *data)
                      *thr->frame.slot[slot].msg
                         ? thr->frame.slot[slot].msg : NULL,
                      video_info);
+#ifdef HAVE_VIDEO_FILTER
+                  if (thr->frame.slot[slot].filter_bpp)
+                     retro_atomic_store_release_size(
+                           &thr->video_st->frame_cache_keeper, 0);
+#endif
                   if (dupe_hw_slot >= 0)
                      video_thread_hw_after_frame(thr, dupe_hw_slot);
                   /* Read from the driver's frame memory where it lies:
@@ -3902,7 +3930,7 @@ static VIDEO_NOINLINE bool video_thread_frame_replay(thread_video_t *thr,
          video_thread_convert(thr, convert, &frame_, dims, &pitch);
 #ifdef HAVE_VIDEO_FILTER
       if (filter_bpp)
-         video_thread_filter(thr->video_st->state_filter,
+         video_thread_filter(NULL, thr->video_st->state_filter,
                thr->video_st->state_buffer, thr->video_st->state_out_bpp,
                &frame_, &dims, &pitch);
 #endif

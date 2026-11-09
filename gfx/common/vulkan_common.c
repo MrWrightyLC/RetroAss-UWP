@@ -26,6 +26,10 @@
 #endif
 
 #include "vulkan_common.h"
+#ifdef HAVE_VAAPI
+#include "vaapi_hevc_vulkan_cache.h"
+#include "vulkan_prime_device.h"
+#endif
 #if defined(ANDROID) && defined(HAVE_THREADS)
 #include "../../record/record_android_capture_device.h"
 #endif
@@ -34,6 +38,9 @@
             || defined(HAVE_RECORD_MEDIACODEC))
 #include "vulkan_android_device.h"
 #include "vulkan_android_cache.h"
+#endif
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+#include "vulkan_custom_driver.h"
 #endif
 #ifdef HAVE_TEMPORAL_UPSCALER
 #include "vulkan_upscaler.h"
@@ -99,7 +106,16 @@
  * Vulkan contexts (multi-window, etc.). The cached_device_vk
  * mechanism assumes single-context ownership. */
 static dylib_t                       vulkan_library;
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+/* From vulkan_custom_driver_open(), which keeps it: never closed here. */
+static bool                          vulkan_library_custom;
+#endif
 static VkInstance                    cached_instance_vk;
+#ifdef HAVE_VAAPI
+static uint32_t                      cached_instance_api_vk;
+static bool                          cached_instance_properties2_vk;
+static bool                          cached_prime_import_vk;
+#endif
 #if defined(_WIN32) && !defined(__WINRT__)
 #include "win_vulkan_dxgi.h"
 #endif
@@ -173,6 +189,9 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_cb(
 {
    const char *severity = "";
    const char *type     = "";
+   const char *prefix   = "";
+   const char *id       = "";
+   const char *close    = "";
 
    switch (msg_severity)
    {
@@ -203,16 +222,35 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_cb(
          break;
    }
 
+   /* Validation layers before 1.4 began each message with its ID,
+    * "Validation Error: [ VUID-... ] ..."; later ones hand the ID over
+    * only as pMessageIdName. It is put back in front, in the old shape,
+    * so a log names what fired either way. */
+   if (     pCallbackData->pMessageIdName
+         && *pCallbackData->pMessageIdName
+         && pCallbackData->pMessage
+         && !strstr(pCallbackData->pMessage, pCallbackData->pMessageIdName))
+   {
+      prefix = (msg_severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT
+            && msg_type == VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT)
+         ? "Validation Error: [ " : "[ ";
+      id     = pCallbackData->pMessageIdName;
+      close  = " ] ";
+   }
+
    switch (msg_severity)
    {
       case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
-         RARCH_ERR("[Vulkan] %s %s: %s.\n", severity, type, pCallbackData->pMessage);
+         RARCH_ERR("[Vulkan] %s %s: %s%s%s%s.\n", severity, type,
+               prefix, id, close, pCallbackData->pMessage);
          break;
       case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
-         RARCH_WARN("[Vulkan] %s %s: %s.\n", severity, type, pCallbackData->pMessage);
+         RARCH_WARN("[Vulkan] %s %s: %s%s%s%s.\n", severity, type,
+               prefix, id, close, pCallbackData->pMessage);
          break;
       default:
-         RARCH_LOG("[Vulkan] %s %s: %s.\n", severity, type, pCallbackData->pMessage);
+         RARCH_LOG("[Vulkan] %s %s: %s%s%s%s.\n", severity, type,
+               prefix, id, close, pCallbackData->pMessage);
          break;
    }
    return VK_FALSE;
@@ -930,6 +968,13 @@ static const char *vulkan_optional_device_extensions[] = {
     * HDR still works via the colour space alone. */
    , "VK_EXT_hdr_metadata"
 #endif
+#ifdef HAVE_VAAPI
+   , "VK_KHR_external_memory_fd"
+   , "VK_EXT_external_memory_dma_buf"
+   , "VK_EXT_image_drm_format_modifier"
+   , "VK_EXT_queue_family_foreign"
+   , "VK_KHR_image_format_list"
+#endif
 #if defined(ANDROID) \
       && (defined(HAVE_RMP4) || defined(HAVE_RVP9) || defined(HAVE_RAV1) \
             || defined(HAVE_RECORD_MEDIACODEC))
@@ -1142,6 +1187,11 @@ static unsigned vulkan_optional_device_count(
       while (count && vulkan_android_device_extension(
                         vulkan_optional_device_extensions[count - 1]))
          count--;
+#elif defined(HAVE_VAAPI)
+   if (!own_device || vk->context.xr)
+      while (count && vulkan_prime_device_extension(
+                        vulkan_optional_device_extensions[count - 1]))
+         count--;
 #else
    (void)own_device;
 #endif
@@ -1206,7 +1256,7 @@ static const void *vulkan_upscaler_features(gfx_ctx_vulkan_data_t *vk,
 
 static VkResult vulkan_context_create_device(gfx_ctx_vulkan_data_t *vk,
       VkPhysicalDevice gpu, const VkDeviceCreateInfo *info,
-      VkDevice *device)
+      const VkAllocationCallbacks *allocator, VkDevice *device)
 {
    unsigned i;
    const VkBaseInStructure *chain;
@@ -1261,7 +1311,7 @@ static VkResult vulkan_context_create_device(gfx_ctx_vulkan_data_t *vk,
       vk->context.xr = NULL;
    }
 #endif
-   return vkCreateDevice(gpu, info, NULL, device);
+   return vkCreateDevice(gpu, info, allocator, device);
 }
 
 #ifdef HAVE_OPENXR
@@ -1447,7 +1497,7 @@ static VkDevice vulkan_context_create_device_wrapper(
          vinfo.pQueueCreateInfos = qi;
          vinfo.queueCreateInfoCount = nq;
          vinfo.enabledExtensionCount = next;
-         if (video.lanes && vulkan_context_create_device(vk, gpu, &vinfo, &device) == VK_SUCCESS)
+         if (video.lanes && vulkan_context_create_device(vk, gpu, &vinfo, NULL, &device) == VK_SUCCESS)
          {
             vk->context.video_decode_family = video.decode_family;
             vk->context.video_xfer_family = video.xfer_family;
@@ -1494,7 +1544,7 @@ static VkDevice vulkan_context_create_device_wrapper(
       }
    }
    info.pNext = vulkan_anti_lag_chain(vk, gpu, &anti_lag_features, info.pNext);
-   if ((res = vulkan_context_create_device(vk, gpu, &info, &device)) != VK_SUCCESS)
+   if ((res = vulkan_context_create_device(vk, gpu, &info, NULL, &device)) != VK_SUCCESS)
    {
       RARCH_ERR("[Vulkan] Failed to create device (%d).\n", res);
       device = VK_NULL_HANDLE;
@@ -1502,6 +1552,107 @@ static VkDevice vulkan_context_create_device_wrapper(
 
    free((void*)device_extensions);
    return device;
+}
+
+/* A v1 core makes the device from RetroArch's required list but may
+ * leave it out, so its vkCreateDevice is ours and adds what is missing */
+static struct
+{
+   gfx_ctx_vulkan_data_t *vk;
+   const char **required;
+   uint32_t num_required;
+   char added[512];
+   bool ran;
+} vulkan_v1_device;
+
+static VKAPI_ATTR VkResult VKAPI_CALL vulkan_v1_create_device(
+      VkPhysicalDevice gpu, const VkDeviceCreateInfo *create_info,
+      const VkAllocationCallbacks *allocator, VkDevice *device)
+{
+   VkResult res;
+   uint32_t i, j;
+   uint32_t num_props             = 0;
+   VkExtensionProperties *props   = NULL;
+   VkDeviceCreateInfo info        = *create_info;
+   const char **exts              = NULL;
+
+   /* Called again after create_device returned */
+   if (!vulkan_v1_device.vk)
+      return vkCreateDevice(gpu, create_info, allocator, device);
+   if (!(exts = (const char**)malloc(
+         (info.enabledExtensionCount + vulkan_v1_device.num_required)
+         * sizeof(const char*))))
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+   if (info.enabledExtensionCount)
+      memcpy((void*)exts, info.ppEnabledExtensionNames,
+            info.enabledExtensionCount * sizeof(const char*));
+   /* The core may have picked another GPU than the list was made for */
+   if (     vkEnumerateDeviceExtensionProperties(gpu, NULL, &num_props,
+               NULL) == VK_SUCCESS
+         && num_props
+         && (props = (VkExtensionProperties*)malloc(
+               num_props * sizeof(*props)))
+         && vkEnumerateDeviceExtensionProperties(gpu, NULL, &num_props,
+               props) != VK_SUCCESS)
+      num_props = 0;
+
+   vulkan_v1_device.ran      = true;
+   vulkan_v1_device.added[0] = '\0';
+   for (i = 0; i < vulkan_v1_device.num_required; i++)
+   {
+      const char *name = vulkan_v1_device.required[i];
+      for (j = 0; j < info.enabledExtensionCount; j++)
+         if (!strcmp(exts[j], name))
+            break;
+      if (j < info.enabledExtensionCount)
+         continue;
+      if (!props || !vulkan_find_extensions(&name, 1, props, num_props))
+         continue;
+      exts[info.enabledExtensionCount++] = name;
+      if (vulkan_v1_device.added[0])
+         strlcat(vulkan_v1_device.added, ", ",
+               sizeof(vulkan_v1_device.added));
+      strlcat(vulkan_v1_device.added, name, sizeof(vulkan_v1_device.added));
+   }
+   free(props);
+
+   info.ppEnabledExtensionNames = exts;
+   /* The upscaler's features and the runtime's vkCreateDevice too */
+   res = vulkan_context_create_device(vulkan_v1_device.vk, gpu, &info,
+         allocator, device);
+   free((void*)exts);
+   return res;
+}
+
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vulkan_v1_get_instance_proc_addr(
+      VkInstance instance, const char *name)
+{
+   if (!strcmp(name, "vkCreateDevice"))
+      return (PFN_vkVoidFunction)vulkan_v1_create_device;
+   /* A loader that resolves the rest through this must not miss it */
+   if (!strcmp(name, "vkGetInstanceProcAddr"))
+      return (PFN_vkVoidFunction)vulkan_v1_get_instance_proc_addr;
+   return vulkan_symbol_wrapper_instance_proc_addr()(instance, name);
+}
+
+#ifdef HAVE_VAAPI
+static VkResult vulkan_prime_create_device(void *user, VkPhysicalDevice gpu,
+      const VkDeviceCreateInfo *info, VkDevice *device)
+{
+   return vulkan_context_create_device(
+         (gfx_ctx_vulkan_data_t*)user, gpu, info, NULL, device);
+}
+#endif
+
+static VkResult vulkan_context_create_own_device(gfx_ctx_vulkan_data_t *vk,
+      VkPhysicalDevice gpu, const VkDeviceCreateInfo *info, VkDevice *device)
+{
+#ifdef HAVE_VAAPI
+   return vulkan_prime_device_create(vk, gpu, info, device,
+         &vk->context.prime_import_device, vulkan_prime_create_device);
+#else
+   return vulkan_context_create_device(vk, gpu, info, NULL, device);
+#endif
 }
 
 static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
@@ -1582,6 +1733,9 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
 
    /* Set below for a device made here; a core's has none of ours */
    vk->context.flags &= ~VK_CTX_FLAG_TIMELINE_SEMAPHORE;
+#ifdef HAVE_VAAPI
+   vk->context.prime_import_device = false;
+#endif
    vk->context.video_lanes         = 0;
    vk->context.video_codec_operations = 0;
    vk->context.video_decode_family = 0;
@@ -1653,15 +1807,32 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
          if (vk->context.gpu != VK_NULL_HANDLE)
             num_dev_exts = vulkan_upscaler_device_exts(vk, vk->context.gpu,
                   dev_exts, num_dev_exts, ARRAY_SIZE(dev_exts));
+         vulkan_v1_device.vk           = vk;
+         vulkan_v1_device.required     = dev_exts;
+         vulkan_v1_device.num_required = num_dev_exts;
          ret = iface->create_device(&context, vk->context.instance,
                vk->context.gpu,
                vk->vk_surface,
-               vulkan_symbol_wrapper_instance_proc_addr(),
+               vulkan_v1_get_instance_proc_addr,
                dev_exts,
                num_dev_exts,
                NULL,
                0,
                &features);
+         if (ret && vulkan_v1_device.added[0])
+            RARCH_WARN("[Vulkan] The core's create_device left out required device extensions: %s; added them.\n",
+                  vulkan_v1_device.added);
+#ifdef HAVE_OPENXR
+         /* The device may lack the runtime's extensions, or under
+          * enable2 not be the runtime's */
+         else if (ret && !vulkan_v1_device.ran && vk->context.xr)
+         {
+            RARCH_WARN("[OpenXR] The core made its Vulkan device without the vkCreateDevice it was given; headset output is off for this core.\n");
+            vulkan_openxr_drop(vk->context.xr);
+            vk->context.xr = NULL;
+         }
+#endif
+         memset(&vulkan_v1_device, 0, sizeof(vulkan_v1_device));
       }
 
       if (ret)
@@ -1702,6 +1873,19 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
 
    vkGetPhysicalDeviceProperties(vk->context.gpu,
          &vk->context.gpu_properties);
+#ifdef HAVE_VAAPI
+   memset(&vk->context.drm_identity, 0, sizeof(vk->context.drm_identity));
+   if (vk->context.properties2_instance == vk->context.instance)
+   {
+      PFN_vkGetInstanceProcAddr proc = vulkan_symbol_wrapper_instance_proc_addr();
+      const char *name = vulkan_drm_properties_command(
+            vk->context.instance_api_version, vk->context.instance_properties2);
+      if (proc && name)
+         vulkan_drm_identity_query(&vk->context.drm_identity, vk->context.gpu,
+               vkEnumerateDeviceExtensionProperties,
+               (PFN_vkGetPhysicalDeviceProperties2)proc(vk->context.instance, name));
+   }
+#endif
    vkGetPhysicalDeviceMemoryProperties(vk->context.gpu,
          &vk->context.memory_properties);
 
@@ -1920,6 +2104,12 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
                   &android_plan, device_info.pNext);
       }
 #endif
+#ifdef HAVE_VAAPI
+      vk->context.prime_import_device = vulkan_prime_device_filter(
+            vk->context.gpu_properties.apiVersion, vk->context.instance_api_version,
+            true, vk->context.drm_identity.valid && !vk->context.xr,
+            enabled_device_extensions, &enabled_device_extension_count);
+#endif
       device_info.pNext = vulkan_anti_lag_chain(vk, vk->context.gpu,
             &anti_lag_features, device_info.pNext);
 
@@ -1933,6 +2123,9 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
       {
          vk->context.device = cached_device_vk;
          cached_device_vk   = NULL;
+#ifdef HAVE_VAAPI
+         vk->context.prime_import_device = cached_prime_import_vk;
+#endif
          if (cached_timeline_vk)
             vk->context.flags |=  VK_CTX_FLAG_TIMELINE_SEMAPHORE;
          else
@@ -2011,7 +2204,7 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
             vinfo.queueCreateInfoCount    = nq;
             vinfo.pQueueCreateInfos       = qi;
             vinfo.enabledExtensionCount   = next;
-            if (vulkan_context_create_device(vk, vk->context.gpu,
+            if (vulkan_context_create_own_device(vk, vk->context.gpu,
                      &vinfo, &dev) == VK_SUCCESS)
             {
                vk->context.video_decode_family = video.decode_family;
@@ -2030,7 +2223,7 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
             }
          }
          if (     dev == VK_NULL_HANDLE
-               && vulkan_context_create_device(vk, vk->context.gpu,
+               && vulkan_context_create_own_device(vk, vk->context.gpu,
                   &device_info, &dev) != VK_SUCCESS)
          {
             dev = VK_NULL_HANDLE;
@@ -2041,7 +2234,7 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
                      enabled_device_extensions, &enabled_device_extension_count))
             {
                device_info.enabledExtensionCount = enabled_device_extension_count;
-               if (vulkan_context_create_device(vk, vk->context.gpu,
+               if (vulkan_context_create_own_device(vk, vk->context.gpu,
                         &device_info, &dev) != VK_SUCCESS)
                   dev = VK_NULL_HANDLE;
             }
@@ -2415,6 +2608,18 @@ static VkInstance vulkan_context_create_instance_wrapper(void *opaque, const VkI
       goto end;
    }
 
+#ifdef HAVE_VAAPI
+   vk->context.properties2_instance = instance;
+   vk->context.instance_api_version = info.pApplicationInfo
+         && info.pApplicationInfo->apiVersion
+         ? info.pApplicationInfo->apiVersion : VK_API_VERSION_1_0;
+   vk->context.instance_properties2 = false;
+   for (i = 0; i < info.enabledExtensionCount; i++)
+      if (string_is_equal(info.ppEnabledExtensionNames[i],
+               VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME))
+         vk->context.instance_properties2 = true;
+#endif
+
 end:
    free((void*)instance_extensions);
    free((void*)instance_layers);
@@ -2720,6 +2925,9 @@ static void vulkan_destroy_swapchain(gfx_ctx_vulkan_data_t *vk)
    unsigned i;
    unsigned j;
 
+   vk->context.flags &= ~(VK_CTX_FLAG_DEFERRED_PRESENT
+         | VK_CTX_FLAG_FRAME_SLOT_PENDING);
+
 #ifdef VK_USE_PLATFORM_WIN32_KHR
    /* Exclusive mode is bound to the swapchain; release it first. */
    if (vk->fse_acquired && vk->fse_release && vk->swapchain != VK_NULL_HANDLE)
@@ -2881,6 +3089,63 @@ static VkSemaphore vulkan_get_wsi_acquire_semaphore(struct vulkan_context *ctx)
    return sem;
 }
 
+static void vulkan_recycle_acquire_waits(struct vulkan_context *ctx,
+      unsigned index)
+{
+   unsigned j;
+   for (j = 0; j < ctx->swapchain_num_wait_semaphores[index]; j++)
+   {
+      VkSemaphore sem = ctx->swapchain_wait_semaphores[index][j];
+      if (sem == VK_NULL_HANDLE)
+         continue;
+      assert(ctx->num_recycled_acquire_semaphores < 2 * VULKAN_MAX_SWAPCHAIN_IMAGES + 1);
+      ctx->swapchain_recycled_semaphores[ctx->num_recycled_acquire_semaphores++] = sem;
+      ctx->swapchain_wait_semaphores[index][j] = VK_NULL_HANDLE;
+   }
+   ctx->swapchain_num_wait_semaphores[index] = 0;
+}
+
+bool vulkan_context_continue_frame(gfx_ctx_vulkan_data_t *vk)
+{
+   struct vulkan_context *ctx = &vk->context;
+   unsigned index;
+   VkFence *fence;
+   VkResult status;
+   if (!(ctx->flags & VK_CTX_FLAG_FRAME_SLOT_PENDING))
+      return true;
+   if (!ctx->num_swapchain_images)
+      return false;
+   index = (ctx->current_frame_index + 1) % ctx->num_swapchain_images;
+   fence = &ctx->swapchain_fences[index];
+   if (*fence != VK_NULL_HANDLE)
+   {
+      if (ctx->swapchain_fences_signalled[index])
+      {
+         status = vkGetFenceStatus(ctx->device, *fence);
+         if (status == VK_ERROR_DEVICE_LOST)
+            video_driver_modify_disp_flags(VIDEO_FLAG_GPU_DEVICE_LOST, 0);
+         if (status != VK_SUCCESS)
+            return false;
+      }
+      if (vkResetFences(ctx->device, 1, fence) != VK_SUCCESS)
+         return false;
+   }
+   else
+   {
+      VkFenceCreateInfo info;
+      info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+      info.pNext = NULL;
+      info.flags = 0;
+      if (vkCreateFence(ctx->device, &info, NULL, fence) != VK_SUCCESS)
+         return false;
+   }
+   ctx->swapchain_fences_signalled[index] = false;
+   vulkan_recycle_acquire_waits(ctx, index);
+   ctx->current_frame_index = index;
+   ctx->flags &= ~VK_CTX_FLAG_FRAME_SLOT_PENDING;
+   return true;
+}
+
 static void vulkan_acquire_wait_fences(gfx_ctx_vulkan_data_t *vk)
 {
    unsigned index;
@@ -2910,20 +3175,7 @@ static void vulkan_acquire_wait_fences(gfx_ctx_vulkan_data_t *vk)
 
    /* The fence covered the submission that waited on these, so
     * their signals are consumed and they can be acquired with. */
-   {
-      struct vulkan_context *ctx = &vk->context;
-      unsigned j;
-      for (j = 0; j < ctx->swapchain_num_wait_semaphores[index]; j++)
-      {
-         VkSemaphore sem = ctx->swapchain_wait_semaphores[index][j];
-         if (sem == VK_NULL_HANDLE)
-            continue;
-         assert(ctx->num_recycled_acquire_semaphores < 2 * VULKAN_MAX_SWAPCHAIN_IMAGES + 1);
-         ctx->swapchain_recycled_semaphores[ctx->num_recycled_acquire_semaphores++] = sem;
-         ctx->swapchain_wait_semaphores[index][j] = VK_NULL_HANDLE;
-      }
-      ctx->swapchain_num_wait_semaphores[index] = 0;
-   }
+   vulkan_recycle_acquire_waits(&vk->context, index);
 }
 
 #ifdef HAVE_OPENXR
@@ -4479,7 +4731,7 @@ bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
     * The display is often physically connected to the integrated GPU,
     * so the discrete GPU may not report HDR surface formats even though
     * the display supports HDR.  Query all other physical devices for
-    * HDR formats and merge them in — on Windows the DWM compositor
+    * HDR formats and merge them in â€” on Windows the DWM compositor
     * handles presentation, so HDR formats reported by ANY device for
     * this surface will work. */
    if (vk->context.flags & VK_CTX_FLAG_HDR_SUPPORT)
@@ -4573,7 +4825,7 @@ bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
 
          /* Advertise HDR capabilities to the menu based on which
           * surface formats the driver actually enumerates.
-          * The colorspace extension alone is not enough — some
+          * The colorspace extension alone is not enough â€” some
           * drivers expose the extension without any HDR surface
           * formats. */
          {
@@ -4641,7 +4893,7 @@ bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
          {
             /* HDR10 mode: always A2B10G10R10 + ST.2084 PQ.
              * Shaders that output RGBA16F with PQ data get quantised
-             * to 10-bit by the swapchain — R16G16B16A16_SFLOAT is not
+             * to 10-bit by the swapchain â€” R16G16B16A16_SFLOAT is not
              * paired with HDR10_ST2084 on any known implementation. */
             vk->context.flags &= ~VK_CTX_FLAG_HDR_SCRGB;
 
@@ -5276,6 +5528,76 @@ static void vulkan_context_openxr_init(gfx_ctx_vulkan_data_t *vk,
 }
 #endif
 
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+/* A custom driver has to see a GPU. A Mesa one must also not report the
+ * system driver's ID: the hook loads that driver when the custom library
+ * fails to. Other vendors' builds may report that ID themselves. */
+static bool vulkan_context_custom_driver_ok(gfx_ctx_vulkan_data_t *vk,
+      uint32_t api_version)
+{
+   VkPhysicalDeviceDriverProperties driver;
+   VkPhysicalDeviceProperties2 props;
+   PFN_vkGetPhysicalDeviceProperties2 get_props2 = NULL;
+   VkPhysicalDevice gpu                          = VK_NULL_HANDLE;
+   uint32_t count                                = 1;
+   VkResult res                                  = vkEnumeratePhysicalDevices(
+         vk->context.instance, &count, &gpu);
+
+   if ((res != VK_SUCCESS && res != VK_INCOMPLETE) || !count || !gpu)
+   {
+      RARCH_WARN("[Vulkan] Custom driver found no GPU.\n");
+      return false;
+   }
+   if (!vulkan_custom_driver_mesa())
+   {
+      RARCH_WARN("[Vulkan] Custom driver is not Mesa: its load cannot be confirmed.\n");
+      return true;
+   }
+   if (api_version >= VK_API_VERSION_1_1)
+      get_props2 = (PFN_vkGetPhysicalDeviceProperties2)
+         vulkan_symbol_wrapper_instance_proc_addr()(vk->context.instance,
+               "vkGetPhysicalDeviceProperties2");
+   if (!get_props2)
+      return true;
+   memset(&driver, 0, sizeof(driver));
+   memset(&props, 0, sizeof(props));
+   driver.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
+   props.sType  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+   props.pNext  = &driver;
+   get_props2(gpu, &props);
+   if (driver.driverID == VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
+   {
+      RARCH_WARN("[Vulkan] Custom driver did not load; the system one did.\n");
+      return false;
+   }
+   return true;
+}
+
+/* The custom driver failed before its surface: init once more. Its path
+ * is now off for the session, so this one gets the system driver. */
+static bool vulkan_context_init_system(gfx_ctx_vulkan_data_t *vk,
+      enum vulkan_wsi_type type)
+{
+   if (vk->context.instance)
+   {
+      PFN_vkDestroyInstance destroy = (PFN_vkDestroyInstance)
+         vulkan_symbol_wrapper_instance_proc_addr()(vk->context.instance,
+               "vkDestroyInstance");
+#ifdef VULKAN_DEBUG
+      if (vk->context.debug_callback)
+         vkDestroyDebugUtilsMessengerEXT(vk->context.instance,
+               vk->context.debug_callback, NULL);
+      vk->context.debug_callback = VK_NULL_HANDLE;
+#endif
+      if (destroy)
+         destroy(vk->context.instance, NULL);
+      vk->context.instance = VK_NULL_HANDLE;
+   }
+   vulkan_custom_driver_failed();
+   return vulkan_context_init(vk, type);
+}
+#endif
+
 bool vulkan_context_init(gfx_ctx_vulkan_data_t *vk,
       enum vulkan_wsi_type type)
 {
@@ -5285,6 +5607,9 @@ bool vulkan_context_init(gfx_ctx_vulkan_data_t *vk,
    video_driver_state_t *video_st = video_state_get_ptr();
    struct retro_hw_render_context_negotiation_interface_vulkan
                            *iface = (struct retro_hw_render_context_negotiation_interface_vulkan*)video_st->hw_render_context_negotiation;
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+   bool custom_driver             = false;
+#endif
 
    if (iface && iface->interface_type != RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN)
    {
@@ -5300,6 +5625,25 @@ bool vulkan_context_init(gfx_ctx_vulkan_data_t *vk,
 
    vk->wsi_type = type;
    vulkan_swapchain_settings_init(&vk->context.swapchain_settings);
+
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+   /* A kept instance keeps the loader it was made with. */
+   if (!cached_instance_vk)
+   {
+      dylib_t custom = vulkan_custom_driver_open();
+      if (     vulkan_library != custom
+            && (custom || vulkan_library_custom))
+      {
+         if (vulkan_library && !vulkan_library_custom)
+            dylib_close(vulkan_library);
+         vulkan_library = custom;
+      }
+      vulkan_library_custom = (custom != NULL);
+      custom_driver         = vulkan_library_custom;
+   }
+   else
+      vulkan_custom_driver_kept();
+#endif
 
    if (!vulkan_library)
    {
@@ -5345,6 +5689,10 @@ bool vulkan_context_init(gfx_ctx_vulkan_data_t *vk,
    if (!GetInstanceProcAddr)
    {
       RARCH_ERR("[Vulkan] Failed to load vkGetInstanceProcAddr symbol, broken loader?\n");
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+      if (custom_driver)
+         return vulkan_context_init_system(vk, type);
+#endif
       return false;
    }
 
@@ -5353,6 +5701,10 @@ bool vulkan_context_init(gfx_ctx_vulkan_data_t *vk,
    if (!vulkan_symbol_wrapper_load_global_symbols())
    {
       RARCH_ERR("[Vulkan] Failed to load global Vulkan symbols, broken loader?\n");
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+      if (custom_driver)
+         return vulkan_context_init_system(vk, type);
+#endif
       return false;
    }
 
@@ -5427,6 +5779,11 @@ bool vulkan_context_init(gfx_ctx_vulkan_data_t *vk,
    {
       vk->context.instance = cached_instance_vk;
       cached_instance_vk   = NULL;
+#ifdef HAVE_VAAPI
+      vk->context.properties2_instance = vk->context.instance;
+      vk->context.instance_api_version = cached_instance_api_vk;
+      vk->context.instance_properties2 = cached_instance_properties2_vk;
+#endif
       /* Only the create wrapper sees the enabled extensions. */
       if (cached_instance_hdr_vk)
          vk->context.flags |=  VK_CTX_FLAG_HDR_SUPPORT;
@@ -5458,6 +5815,10 @@ bool vulkan_context_init(gfx_ctx_vulkan_data_t *vk,
       if (vk->context.instance == VK_NULL_HANDLE)
       {
          RARCH_ERR("[Vulkan] Failed to create Vulkan instance.\n");
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+         if (custom_driver)
+            return vulkan_context_init_system(vk, type);
+#endif
          return false;
       }
    }
@@ -5492,8 +5853,17 @@ bool vulkan_context_init(gfx_ctx_vulkan_data_t *vk,
    if (!vulkan_load_instance_symbols(vk))
    {
       RARCH_ERR("[Vulkan] Failed to load instance symbols.\n");
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+      if (custom_driver)
+         return vulkan_context_init_system(vk, type);
+#endif
       return false;
    }
+
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+   if (custom_driver && !vulkan_context_custom_driver_ok(vk, app.apiVersion))
+      return vulkan_context_init_system(vk, type);
+#endif
 
    return true;
 }
@@ -5577,16 +5947,29 @@ void vulkan_context_destroy(gfx_ctx_vulkan_data_t *vk,
    if (vulkan_android_cache_device_pending(vk->context.device))
       video_st_flags &= ~VIDEO_FLAG_CACHE_CONTEXT;
 #endif
+#ifdef HAVE_VAAPI
+   if (vaapi_hevc_vulkan_cache_device_pending(vk->context.device))
+      video_st_flags &= ~VIDEO_FLAG_CACHE_CONTEXT;
+#endif
 #if defined(ANDROID) && defined(HAVE_THREADS)
    if (record_android_capture_device_pending(vk->context.device))
       video_st_flags &= ~VIDEO_FLAG_CACHE_CONTEXT;
 #endif
+   if (vk->flags & VK_DATA_FLAG_DROP_CONTEXT)
+      video_st_flags &= ~VIDEO_FLAG_CACHE_CONTEXT;
    if (video_st_flags & VIDEO_FLAG_CACHE_CONTEXT)
    {
       cached_device_vk         = vk->context.device;
       cached_gpu_vk            = vk->context.gpu;
       cached_gpu_index_vk      = vk->context.gpu_index;
       cached_instance_vk       = vk->context.instance;
+#ifdef HAVE_VAAPI
+      cached_prime_import_vk   = vk->context.prime_import_device;
+      cached_instance_api_vk   = vk->context.properties2_instance == vk->context.instance
+            ? vk->context.instance_api_version : 0;
+      cached_instance_properties2_vk = vk->context.properties2_instance == vk->context.instance
+            && vk->context.instance_properties2;
+#endif
       cached_destroy_device_vk = vk->context.destroy_device;
       cached_instance_hdr_vk   =
          (vk->context.flags & VK_CTX_FLAG_HDR_SUPPORT) ? true : false;
@@ -5634,6 +6017,9 @@ void vulkan_context_destroy(gfx_ctx_vulkan_data_t *vk,
             || defined(HAVE_RECORD_MEDIACODEC))
          vulkan_android_cache_device_destroying(vk->context.device);
 #endif
+#ifdef HAVE_VAAPI
+         vaapi_hevc_vulkan_cache_device_destroying(vk->context.device);
+#endif
          vkDestroyDevice(vk->context.device, NULL);
 #if defined(ANDROID) && defined(HAVE_THREADS)
          record_android_capture_device_destroyed(vk->context.device);
@@ -5642,6 +6028,9 @@ void vulkan_context_destroy(gfx_ctx_vulkan_data_t *vk,
       && (defined(HAVE_RMP4) || defined(HAVE_RVP9) || defined(HAVE_RAV1) \
             || defined(HAVE_RECORD_MEDIACODEC))
          vulkan_android_cache_device_destroyed(vk->context.device);
+#endif
+#ifdef HAVE_VAAPI
+         vaapi_hevc_vulkan_cache_device_destroyed(vk->context.device);
 #endif
          vk->context.device = NULL;
       }
@@ -5653,7 +6042,14 @@ void vulkan_context_destroy(gfx_ctx_vulkan_data_t *vk,
 
          if (vulkan_library)
          {
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+            /* A linker namespace cannot be unloaded. */
+            if (!vulkan_library_custom)
+               dylib_close(vulkan_library);
+            vulkan_library_custom = false;
+#else
             dylib_close(vulkan_library);
+#endif
             vulkan_library = NULL;
          }
       }

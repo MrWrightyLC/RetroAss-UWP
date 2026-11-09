@@ -1612,7 +1612,7 @@ XMB_NOINLINE static void xmb_render_messagebox_internal(
             0.75f, 0.75f, 0.75f, 0.5f,
       };
       bool input_menu_swap_ok_cancel_buttons = video_info->input_menu_swap_ok_cancel_buttons;
-      const char *str_back                   = msg_hash_to_str(MENU_ENUM_LABEL_VALUE_BASIC_MENU_CONTROLS_BACK);
+      const char *str_back                   = msg_hash_to_str(MENU_ENUM_LABEL_VALUE_BASIC_MENU_CONTROLS_CANCEL);
       const char *str_ok                     = msg_hash_to_str(MENU_ENUM_LABEL_VALUE_BASIC_MENU_CONTROLS_OK);
       unsigned str_back_width                = font_driver_get_message_width(xmb->font, str_back, strlen(str_back), 1.0f);
       unsigned str_ok_width                  = font_driver_get_message_width(xmb->font, str_ok, strlen(str_ok), 1.0f);
@@ -4393,6 +4393,7 @@ static uintptr_t xmb_icon_get_id(xmb_handle_t *xmb,
       case MENU_ENUM_LABEL_FRAME_TIME_COUNTER_SETTINGS:
       case MENU_ENUM_LABEL_PLAYLIST_MANAGER_CLEAN_PLAYLIST:
       case MENU_ENUM_LABEL_PLAYLIST_MANAGER_REFRESH_PLAYLIST:
+      case MENU_ENUM_LABEL_PLAYLIST_MANAGER_REFRESH_ALL_PLAYLISTS:
       case MENU_ENUM_LABEL_CLOUD_SYNC_SETTINGS:
          return GFX_SURFACE_HANDLE(xmb->textures.list[XMB_TEXTURE_RELOAD]);
       case MENU_ENUM_LABEL_VRR_RUNLOOP_ENABLE:
@@ -4549,6 +4550,7 @@ static uintptr_t xmb_icon_get_id(xmb_handle_t *xmb,
       case MENU_ENUM_LABEL_INPUT_LIBRETRO_DEVICE:
       case MENU_ENUM_LABEL_INPUT_DEVICE_INDEX:
       case MENU_ENUM_LABEL_INPUT_RETROPAD_BINDS:
+      case MENU_ENUM_LABEL_INPUT_CONTROLLERS:
       case MENU_ENUM_LABEL_INPUT_USER_1_BINDS:
       case MENU_ENUM_LABEL_INPUT_USER_2_BINDS:
       case MENU_ENUM_LABEL_INPUT_USER_3_BINDS:
@@ -5010,6 +5012,8 @@ static uintptr_t xmb_icon_get_id(xmb_handle_t *xmb,
          else if (strstr(enum_label, "_gun_")
                || strstr(enum_label, "_aim_"))
             return GFX_SURFACE_HANDLE(xmb->textures.list[XMB_TEXTURE_INPUT_LGUN]);
+         else if (strstr(enum_label, "_touchpad"))
+            return GFX_SURFACE_HANDLE(xmb->textures.list[XMB_TEXTURE_OVERLAY]);
          else if (string_starts_with_size(enum_label, "input_device_reserv", STRLEN_CONST("input_device_reserv")))
             return GFX_SURFACE_HANDLE(xmb->textures.list[XMB_TEXTURE_OVERRIDE]);
       }
@@ -6221,7 +6225,9 @@ static enum menu_action xmb_parse_menu_entry_action(
                && menu_media_selected_in_history(menu_st)))
          && !xmb->show_fullscreen_thumbnails
          && (action == MENU_ACTION_OK || action == MENU_ACTION_SELECT || action == MENU_ACTION_START)
-         && menu_media_open_selected_file(menu_st, &xmb->thumbnails.left, &xmb->thumbnails.right))
+         && menu_media_open_selected_file(menu_st, &xmb->thumbnails.left, &xmb->thumbnails.right,
+               xmb->fullscreen_thumbnail_label,
+               sizeof(xmb->fullscreen_thumbnail_label)))
    {
       xmb->thumbnails.pending = XMB_PENDING_THUMBNAIL_NONE;
       xmb->fullscreen_thumbnails_available = true;
@@ -7368,7 +7374,9 @@ static void xmb_context_reset_internal(xmb_handle_t *xmb,
          && (xmb->is_file_list
             || (xmb->is_playlist && menu_media_selected_in_history(menu_st)))
          && menu_media_open_selected_file(menu_st,
-               &xmb->thumbnails.left, &xmb->thumbnails.right))
+               &xmb->thumbnails.left, &xmb->thumbnails.right,
+               xmb->fullscreen_thumbnail_label,
+               sizeof(xmb->fullscreen_thumbnail_label)))
       xmb->thumbnails.pending = XMB_PENDING_THUMBNAIL_NONE;
 
    /* Have to reset this, otherwise savestate
@@ -10069,7 +10077,9 @@ static void xmb_navigation_set(void *data, bool scroll)
          && (xmb->is_file_list || (xmb->is_playlist
                && menu_media_selected_in_history(menu_state_get_ptr())))
          && menu_media_open_selected_file(menu_state_get_ptr(),
-               &xmb->thumbnails.left, &xmb->thumbnails.right))
+               &xmb->thumbnails.left, &xmb->thumbnails.right,
+               xmb->fullscreen_thumbnail_label,
+               sizeof(xmb->fullscreen_thumbnail_label)))
       xmb->thumbnails.pending = XMB_PENDING_THUMBNAIL_NONE;
 }
 

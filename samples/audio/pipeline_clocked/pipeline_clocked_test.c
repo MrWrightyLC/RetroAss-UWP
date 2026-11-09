@@ -27,8 +27,13 @@
  * with a present that blocks behind the runloop's back; and Audio
  * Sync off, display-paced, the pipe deep and shallow; and the second
  * after fast-forward or a pause, which FF_EXIT_ONLY runs alone.
- * PACED_ONLY runs those lanes alone; JITTER_US makes the display-paced
- * core up to that late on each frame, its schedule kept.
+ * PACED_ONLY=1 runs those lanes alone; PACED_ONLY=audio_paced, setpoint,
+ * rate_control, sync_off or ff_exit just that one; audio_paced_16, _32
+ * or _64, setpoint_16, _32 or _64 and rate_control_32 or _64 one device
+ * latency of it, and ff_exit_1 to _5 one of its five transitions, so CI
+ * can run every setting at once. A name that matches nothing fails.
+ * JITTER_US makes the display-paced core up to that late on each frame,
+ * its schedule kept.
  *
  * Includes audio/audio_driver.c so the shipping producer and consumer
  * run.
@@ -664,7 +669,8 @@ static void audio_paced_once(unsigned latency_ms, double seconds, bool cap,
    }
 }
 
-static void audio_paced_case(double seconds)
+/* @only_lat: one device latency of the three, 0 for all of them */
+static void audio_paced_case(double seconds, unsigned only_lat)
 {
    static const unsigned lat[] = { 16, 32, 64 };
    size_t i;
@@ -672,6 +678,8 @@ static void audio_paced_case(double seconds)
    for (i = 0; i < sizeof(lat) / sizeof(lat[0]); i++)
    {
       int mode;
+      if (only_lat && lat[i] != only_lat)
+         continue;
       for (mode = 0; mode < 4; mode++)
       {
          bool   video = (mode & 2) != 0, cap = (mode & 1) != 0;
@@ -730,13 +738,23 @@ static void audio_paced_case(double seconds)
  * before the publish, or the publish where the buffer is smaller -
  * so each publish waits behind that and itself. Without it the device
  * runs between three quarters and full, a publish on top. */
-static void setpoint_case(double seconds)
+/* Settings a PACED_ONLY lane ran: none is a lane name that matched
+ * nothing, which must fail rather than pass on no run. */
+static unsigned paced_settings_run;
+
+/* only_lat: one device latency alone, so a runner can take them in
+ * parallel; 0 runs them all. */
+static void setpoint_case(double seconds, unsigned only_lat)
 {
    static const unsigned lat[] = { 16, 32, 64 };
    size_t i;
    printf("Audio Sync on, display-paced, against the inline setpoint:\n");
    for (i = 0; i < sizeof(lat) / sizeof(lat[0]); i++)
    {
+      if (only_lat && lat[i] != only_lat)
+         continue;
+      paced_settings_run++;
+      {
       double half  = lat[i] / 2.0, publish = 1000.0 / FPS;
       double set   = (half > publish ? half : publish) + publish;
       /* Priming lands on a whole publish past the setpoint, and rate
@@ -749,15 +767,20 @@ static void setpoint_case(double seconds)
       for (cap = 0; cap < 2; cap++)
       {
          /* Retried as above: the host taking the consumer off its core
-          * runs any device dry */
+          * runs any device dry, and drains the first second below the
+          * setpoint as well. Priming short of the setpoint does that in
+          * every run, so only that fails below. */
          for (attempt = 0; attempt < 5; attempt++)
          {
+            bool start_short;
             audio_paced_once(lat[i], seconds, cap != 0, true, true, 0,
                   &avg[cap], &mx, &sp, &held);
-            if (!(cap && (sp || held)))
+            start_short = paced_startup_min < set - publish / 2.0;
+            if (!(cap && (sp || held || start_short)))
                break;
-            printf("  %3u ms  shallow | %u short pulls, %u held; host or setpoint, again\n",
-                  lat[i], (unsigned)sp, (unsigned)held);
+            printf("  %3u ms  shallow | %u short pulls, %u held, first "
+                  "second at least %.1f ms; host or setpoint, again\n",
+                  lat[i], (unsigned)sp, (unsigned)held, paced_startup_min);
          }
          printf("  %3u ms  %-7s | avg %6.1f ms, max %6.1f ms, short %u, first second at least %.1f ms\n",
                lat[i], cap ? "shallow" : "deep", avg[cap], mx, (unsigned)sp,
@@ -776,7 +799,7 @@ static void setpoint_case(double seconds)
        * control climbed to the setpoint at its half percent. */
       if (!(shallow_start >= set - publish / 2.0))
       {
-         printf("FAIL: the first second held %.1f ms after a publish; the setpoint and a publish are %.1f ms\n",
+         printf("FAIL: the first second held %.1f ms after a publish in every run; the setpoint and a publish are %.1f ms\n",
                shallow_start, set);
          paced_failures++;
       }
@@ -785,6 +808,7 @@ static void setpoint_case(double seconds)
          printf("FAIL: shallow queued %.1f ms; the inline setpoint is %.1f ms\n",
                avg[1], set);
          paced_failures++;
+      }
       }
    }
 }
@@ -797,7 +821,7 @@ static void setpoint_case(double seconds)
  * that blocks with vsync off is a second clock the runloop cannot see,
  * and there the controller must still hold the fill short of the full
  * ring, a display faster than the content or slower. */
-static void rate_control_case(double seconds)
+static void rate_control_case(double seconds, unsigned only_lat)
 {
    static const unsigned lat[] = { 32, 64 };
    size_t i;
@@ -807,6 +831,9 @@ static void rate_control_case(double seconds)
       double avg, mx;
       size_t sp, held;
       int    path, attempt;
+      if (only_lat && lat[i] != only_lat)
+         continue;
+      paced_settings_run++;
       for (path = 0; path < 2; path++)
       {
          paced_inline = path == 0;
@@ -1032,7 +1059,9 @@ static bool ff_exit_once(bool inline_path, unsigned pace, bool paused,
    return true;
 }
 
-static void ff_exit_case(void)
+/* only: lane index + 1, so a runner can take them in parallel; 0 runs
+ * them all. */
+static void ff_exit_case(unsigned only)
 {
    static const struct { bool inl; unsigned pace; bool paused; const char *name; } lane[] = {
       { false, RUNLOOP_PACE_TIMER, false, "fast-forward, threaded, frame limiter" },
@@ -1048,6 +1077,9 @@ static void ff_exit_case(void)
       unsigned held = 0;
       double   worst = 0.0;
       int      attempt;
+      if (only && i + 1 != only)
+         continue;
+      paced_settings_run++;
       /* Held: over a millisecond; the longest under a frame. A host
        * that takes the core off its CPU holds a publish too, so only
        * a lane that never runs clean fails. */
@@ -1285,6 +1317,7 @@ int main(int argc, char **argv)
 {
    static const unsigned sweep[] = { 8, 12, 16, 24, 32, 40, 48, 64 };
    double seconds = (argc > 1) ? atof(argv[1]) : 4.0;
+   const char *only;
    size_t i;
 
    memset(frame_audio, 0, sizeof(frame_audio));
@@ -1298,27 +1331,67 @@ int main(int argc, char **argv)
       sync_off_case(seconds);
       return paced_failures ? 1 : 0;
    }
-   if (getenv("PACED_ONLY"))
+   if ((only = getenv("PACED_ONLY")))
    {
-      audio_paced_case(seconds);
-      setpoint_case(seconds);
-      rate_control_case(seconds);
-      sync_off_case(seconds);
-      ff_exit_case();
+      /* PACED_ONLY=1 runs them all; a lane's name runs that one, so a
+       * runner can take the lanes in parallel, each in real time */
+      bool all = !strcmp(only, "1");
+      if (all || !strcmp(only, "audio_paced"))
+      {
+         audio_paced_case(seconds, 0);
+         paced_settings_run++;
+      }
+      /* audio_paced_16, _32 or _64: that device latency alone */
+      else if (!strncmp(only, "audio_paced_", 12))
+      {
+         unsigned l = (unsigned)atoi(only + 12);
+         if (l != 16 && l != 32 && l != 64)
+         {
+            printf("PACED_ONLY=%s: no such lane\n", only);
+            return 1;
+         }
+         audio_paced_case(seconds, l);
+         paced_settings_run++;
+      }
+      /* setpoint_16/_32/_64, rate_control_32/_64 and ff_exit_1 to _5:
+       * one setting alone, so the longest lane, not the longest case,
+       * sets how long a runner waits */
+      if (all || !strcmp(only, "setpoint"))
+         setpoint_case(seconds, 0);
+      else if (!strncmp(only, "setpoint_", 9))
+         setpoint_case(seconds, (unsigned)atoi(only + 9));
+      if (all || !strcmp(only, "rate_control"))
+         rate_control_case(seconds, 0);
+      else if (!strncmp(only, "rate_control_", 13))
+         rate_control_case(seconds, (unsigned)atoi(only + 13));
+      if (all || !strcmp(only, "sync_off"))
+      {
+         sync_off_case(seconds);
+         paced_settings_run++;
+      }
+      if (all || !strcmp(only, "ff_exit"))
+         ff_exit_case(0);
+      else if (!strncmp(only, "ff_exit_", 8))
+         ff_exit_case((unsigned)atoi(only + 8));
+      if (!paced_settings_run)
+      {
+         printf("PACED_ONLY=%s: no such lane\n", only);
+         return 1;
+      }
       return (paced_failures || ff_exit_failures) ? 1 : 0;
    }
    if (getenv("FF_EXIT_ONLY"))
    {
-      ff_exit_case();
+      ff_exit_case(0);
       return ff_exit_failures ? 1 : 0;
    }
    for (i = 0; i < sizeof(sweep) / sizeof(sweep[0]); i++)
       run_one(sweep[i], seconds);
-   audio_paced_case(seconds);
-   setpoint_case(seconds);
-   rate_control_case(seconds);
+   audio_paced_case(seconds, 0);
+   setpoint_case(seconds, 0);
+   rate_control_case(seconds, 0);
    sync_off_case(seconds);
-   ff_exit_case();
+   ff_exit_case(0);
    stall_case();
    return (stall_failures || paced_failures || ff_exit_failures) ? 1 : 0;
 }
